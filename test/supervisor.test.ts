@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type {
   Options as ClaudeOptions,
   ModelInfo,
@@ -131,6 +131,7 @@ function supervisor(
   idleTimeoutMs = 60_000,
   suppliedSidecar?: ClaudeSidecarRepository,
   renderMode: ClaudeRenderMode = 'plugin',
+  resolveConnection?: ConstructorParameters<typeof ClaudeSupervisor>[0]['resolveConnection'],
 ) {
   const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
   sidecarRoots.push(root)
@@ -149,6 +150,7 @@ function supervisor(
     config,
     queryFactory: create,
     sidecar,
+    resolveConnection,
   })
   sidecars.set(runtime, sidecar)
   configs.set(runtime, config)
@@ -970,6 +972,39 @@ describe('Claude supervisor', () => {
     await collect(second)
     expect(runtime.snapshots()[0]).toMatchObject({ model: 'default' })
     await runtime.dispose()
+  })
+
+  it('pins DSH credentials per turn, resumes on rotation, and keeps credentials out of SDK options and snapshots', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    let revision = 'first-connection'
+    const runtime = supervisor(transport.create, 4, 60_000, undefined, 'native', async (provider, model) => ({
+      provider, model, revision,
+      env: { ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic', ANTHROPIC_API_KEY: 'fixture-secret' },
+    }))
+    onTestFinished(() => runtime.dispose())
+    const request = { agent: owner.agent, prompt: 'one', provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+    const first = await runtime.runTurn(request)
+    const query = transport.queries[0]!
+    expect(query.options).toMatchObject({ model: 'deepseek-v4-flash', settingSources: [] })
+    expect(JSON.stringify(query.options)).not.toContain('fixture-secret')
+    query.push(init())
+    query.push(result('one'))
+    await collect(first)
+    const second = await runtime.runTurn({ ...request, prompt: 'two' })
+    expect(transport.queries).toHaveLength(1)
+    query.push(result('two'))
+    await collect(second)
+    revision = 'rotated-connection'
+    const third = await runtime.runTurn({ ...request, prompt: 'three' })
+    expect(query.options.abortController?.signal.aborted).toBe(true)
+    expect(transport.queries[1]!.options).toMatchObject({ model: 'deepseek-v4-flash', resume: 'claude-session-1' })
+    transport.queries[1]!.push(init())
+    transport.queries[1]!.push(result('three'))
+    await collect(third)
+    expect(runtime.snapshots()[0]).toMatchObject({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    expect(JSON.stringify(runtime.snapshots())).not.toContain('fixture-secret')
+    expect(JSON.stringify(await projection(runtime))).not.toContain('fixture-secret')
   })
 
   it('reuses one streaming query for multiple turns', async () => {

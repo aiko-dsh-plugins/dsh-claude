@@ -54,6 +54,21 @@ describe('managed Claude process', () => {
 })
 
 describe('managed spawner', () => {
+  it('forwards only the explicit DSH credential after ambient scrubbing without placing it in argv', () => {
+    const fake = fakeHandle()
+    let spec: SubprocessSpawnSpec | undefined
+    const spawn = createManagedClaudeSpawner({ spawn: value => { spec = value; return fake.handle } }, '/local/claude', undefined, {
+      ANTHROPIC_API_KEY: 'fixture-dsh-key', ANTHROPIC_AUTH_TOKEN: undefined,
+      ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic',
+    })
+    spawn({ command: '/local/claude', args: [], env: {
+      ANTHROPIC_AUTH_TOKEN: 'fixture-personal-token', ANTHROPIC_API_KEY: 'fixture-personal-key',
+      ANTHROPIC_BASE_URL: 'https://unselected.example', GITHUB_TOKEN: 'fixture-github-token',
+    }, signal: new AbortController().signal })
+    expect(spec?.env).toEqual({ ANTHROPIC_API_KEY: 'fixture-dsh-key', ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic' })
+    expect(JSON.stringify(spec?.argv)).not.toContain('fixture-dsh-key')
+  })
+
   it('passes exact argv and removes credential-shaped environment', () => {
     const fake = fakeHandle()
     let spec: SubprocessSpawnSpec | undefined

@@ -3,6 +3,8 @@
 Status: implemented baseline with sidecar persistence amendment
 Date: 2026-08-15
 
+Aiko amendment: [DSH model connections](../../../AIKO.md#dsh-model-connections) supersede the native-Claude-only routing and authentication requirements below when a Session selects a DSH model. Claude Code retains loop/tool ownership; DSH supplies the model connection.
+
 ## 1. Product / Requirement Baseline
 
 ### 1.1 Problem

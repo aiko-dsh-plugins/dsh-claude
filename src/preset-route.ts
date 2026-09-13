@@ -16,6 +16,10 @@ export interface Config {
 export function apply(ctx: Context, config: Config = {}): void {
   ctx.on('agent/request', async (_payload, next) => {
     const upstream = await next()
+    if (config.model === undefined && upstream.provider === 'deepseek-official') return upstream
+    if (config.model === undefined && upstream.provider !== CLAUDE_CODE_PROVIDER && upstream.model !== undefined) {
+      throw new Error(`dsh-claude: provider ${upstream.provider} has no Claude Code model connection; select DeepSeek or Claude Code`)
+    }
     return {
       ...upstream,
       provider: CLAUDE_CODE_PROVIDER,

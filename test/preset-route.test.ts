@@ -30,8 +30,21 @@ describe('Claude preset route', () => {
   it('preserves the upstream selected model alias', async () => {
     const captured = capture()
     apply(captured.ctx)
-    const result = await captured.listener()({} as never, async () => ({ provider: 'upstream-provider', model: 'opus' }))
+    const result = await captured.listener()({} as never, async () => ({ provider: 'claude', model: 'opus' }))
     expect(result).toEqual({ provider: CLAUDE_CODE_PROVIDER, model: 'opus' })
+  })
+
+  it('preserves the DSH provider, model and request controls', async () => {
+    const captured = capture()
+    apply(captured.ctx)
+    const selected = { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'high' }
+    expect(await captured.listener()({}, async () => selected)).toEqual(selected)
+  })
+
+  it('refuses providers without an Anthropic-compatible connection', async () => {
+    const captured = capture()
+    apply(captured.ctx)
+    await expect(captured.listener()({}, async () => ({ provider: 'openai-only', model: 'example' }))).rejects.toThrow('no Claude Code model connection')
   })
 
   it('defaults to default when upstream carries no model', async () => {

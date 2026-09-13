@@ -49,6 +49,7 @@ import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { installDshModelRouting, resolveDshModelConnection } from './dsh-models.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -92,6 +93,7 @@ export function mountClaudeMetadata(
   // module-level mount state. The service method runs on the app's instance.
   resolveCommands: () => ClaudeAgentCommandService | undefined =
     () => ctx.agentPresets.serviceFor(agent, CLAUDE_COMMANDS_SERVICE),
+  canRefresh: () => boolean = () => true,
 ): (() => Promise<void>) | undefined {
   if (ctx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
 
@@ -142,7 +144,7 @@ export function mountClaudeMetadata(
 
   const refresh = () => {
     pending = pending.then(async () => {
-      if (stopped) return
+      if (stopped || !canRefresh()) return
       diagnostic.attempts += 1
 
       let catalog: Awaited<ReturnType<ClaudeSupervisor['supportedCommands']>> | undefined
@@ -190,6 +192,7 @@ export function mountClaudeMetadata(
       if (stopped) return
       // Plan limits belong to the account, not the session, so any idle Claude
       // agent can refresh the cache the (session-less) settings page reads.
+      if (supervisor.snapshots().find(entry => entry.sessionId === String(agent.id))?.provider === 'deepseek-official') return
       try {
         const plan = await supervisor.planUsage(agent, model)
         if (!stopped) recordPlanUsage(normalizePlanUsage(plan, Date.now()))
@@ -275,6 +278,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     config: supervisorConfig,
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,
+    resolveConnection: (provider, model) => resolveDshModelConnection(ctx, provider, model),
   })
   let resolutionError: unknown
   try {
@@ -285,10 +289,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         : config.executablePath,
     )
     supervisorConfig.executablePath = resolution.path
-    ctx.llm.registerAdapter(
-      [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath)),
-    )
+    const adapter = createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath))
+    ctx.llm.registerAdapter([...CLAUDE_CODE_PROVIDER_IDS], adapter)
+    installDshModelRouting(ctx, adapter)
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
       const pending = new Set<Agent>()
@@ -307,6 +310,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             if (commands.length === 0) commandCatalogs.delete(sessionId)
             else commandCatalogs.set(sessionId, commands)
           },
+          undefined,
+          // Native UI waits for the first real turn to select the model and credentials.
+          () => config.enhancedInterface === true || supervisor.snapshots().some(entry => entry.sessionId === sessionId),
         )
         if (dispose !== undefined) mounted.set(agent, dispose)
         pending.delete(agent)

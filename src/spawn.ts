@@ -83,6 +83,7 @@ export function createManagedClaudeSpawner(
   runtime: Pick<SubprocessRuntime, 'spawn'>,
   executablePath: string,
   observe?: SpawnObserver,
+  connectionEnv?: Readonly<Record<string, string | undefined>>,
 ): (options: SpawnOptions) => SpawnedProcess {
   return options => {
     if (options.command !== executablePath) {
@@ -98,7 +99,9 @@ export function createManagedClaudeSpawner(
       },
       graceMs: CLAUDE_PROCESS_GRACE_MS,
       signal: options.signal,
-      env: scrubClaudeSpawnEnv(options.env),
+      // Explicit DSH credentials are supplied only here, after ambient scrubbing.
+      // Keeping them out of SDK settings avoids serializing secrets in argv.
+      env: { ...scrubClaudeSpawnEnv(options.env), ...connectionEnv },
     })
     const managed = new ManagedClaudeProcess(handle)
     observe?.(managed, options)

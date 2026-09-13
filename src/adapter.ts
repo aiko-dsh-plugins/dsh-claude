@@ -359,6 +359,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       agent,
       prompt: injectReviewComments(prompt, this.#drainReviewComments(agent.id as string)),
       model: options.model,
+      provider: options.provider,
       renderMode,
       ...(thinkingMode === undefined ? {} : { thinkingMode }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

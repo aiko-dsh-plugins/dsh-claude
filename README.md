@@ -6,14 +6,14 @@ This is the Aiko fork of [Norman-else/dsh-claude](https://github.com/Norman-else
 
 `dsh-claude` runs the locally installed Claude Code CLI as a first-class conversation provider inside DeepSeek Harness (DSH). It uses Claude Code's official Agent SDK protocol instead of recreating the agent with a separate API client.
 
-Claude Code remains responsible for its agent loop, tools, `CLAUDE.md`, Skills, Hooks, Plugins, MCP servers, settings, and authentication. DSH provides the conversation UI, approval and question surfaces, repository workflow, activity presentation, and managed process lifetime.
+Claude Code remains responsible for its agent loop and tools. Native Claude selections use its own settings and authentication; Aiko DSH model selections use [DSH model connections](AIKO.md#dsh-model-connections) with isolated Claude settings. DSH provides the conversation UI, approval and question surfaces, repository workflow, activity presentation, and managed process lifetime.
 
 ## 2. Installation and removal
 
 ### Requirements
 
 - Aiko DSH `0.1.5-alpha.2` with the native workbench extension, or DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.5-rc.1` package line (DSH Desktop 2.0.7). Plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`; a Host still on that line must pin `@norman-else/dsh-claude@0.1.36`.
-- A local Claude Code installation that is already authenticated.
+- A local Claude Code installation. Native Claude models require Claude authentication; DSH DeepSeek models use the DSH credential.
 - Node.js 20 or later when installing from a source checkout.
 
 The plugin never asks for or stores Claude credentials. Authenticate through the local Claude Code CLI before using the plugin.

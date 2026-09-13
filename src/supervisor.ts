@@ -37,6 +37,7 @@ import { claudeModelValue, recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
+import type { ClaudeModelConnection } from './dsh-models.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -114,6 +115,7 @@ export interface ClaudeTurnRequest {
   agent: Agent
   prompt: SDKUserMessage['message']['content']
   model?: string
+  provider?: string
   thinkingMode?: ClaudeThinkingMode
   /** The renderer this turn is produced for, frozen by the caller before the
    *  turn starts. The setting is live, so reading it per record would let a
@@ -131,6 +133,7 @@ export interface ClaudeSupervisorSnapshot {
   state: ClaudeSupervisorState
   cwd: string
   model: string
+  provider?: string
   thinkingMode?: ClaudeThinkingMode
   lastUsedAt: number
 }
@@ -206,6 +209,7 @@ interface SupervisorEntry {
   ownerAgent: Agent
   cwd: string
   model: string
+  connection: ClaudeModelConnection | undefined
   thinkingMode: ClaudeThinkingMode | undefined
   permissionMode: PermissionMode
   state: ClaudeSupervisorState
@@ -360,6 +364,7 @@ export class ClaudeSupervisor {
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
+  readonly #resolveConnection: (provider: string, model: string) => Promise<ClaudeModelConnection | undefined>
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -382,6 +387,7 @@ export class ClaudeSupervisor {
     queryFactory?: ClaudeQueryFactory
     runDetached?: <T>(operation: () => T) => T
     sidecar?: ClaudeSidecarRepository
+    resolveConnection?: (provider: string, model: string) => Promise<ClaudeModelConnection | undefined>
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
@@ -390,6 +396,10 @@ export class ClaudeSupervisor {
     this.#queryFactory = dependencies.queryFactory ?? (params => claudeQuery(params))
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
     this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
+    this.#resolveConnection = dependencies.resolveConnection ?? (async provider => {
+      if (provider !== 'claude') throw new Error(`dsh-claude: no model connection resolver for ${provider}`)
+      return undefined
+    })
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -399,6 +409,7 @@ export class ClaudeSupervisor {
       state: entry.state,
       cwd: entry.cwd,
       model: entry.model,
+      ...(entry.connection === undefined ? {} : { provider: entry.connection.provider }),
       ...(entry.thinkingMode === undefined ? {} : { thinkingMode: entry.thinkingMode }),
       lastUsedAt: entry.lastUsedAt,
     }))
@@ -600,6 +611,8 @@ export class ClaudeSupervisor {
       }
       throw failure
     }
+    const connection = await this.#resolveConnection(request.provider ?? 'claude', request.model ?? this.#config.defaultModel)
+    await throwIfUnavailable()
     if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
@@ -616,6 +629,7 @@ export class ClaudeSupervisor {
           request.thinkingMode,
           abortDuringAdmission ? request.signal : undefined,
           cancellationSignal,
+          connection,
         )
       } catch (error) {
         await throwIfUnavailable()
@@ -643,7 +657,7 @@ export class ClaudeSupervisor {
       entry.idleTimer = undefined
     }
     const model = request.model ?? this.#config.defaultModel
-    if (request.thinkingMode !== entry.thinkingMode || model !== entry.model) {
+    if (request.thinkingMode !== entry.thinkingMode || model !== entry.model || connection?.revision !== entry.connection?.revision) {
       // The SDK only accepts effort/thinking at query start, and a live
       // setModel is not enough for the model either: the CLI freezes its
       // system prompt (including the "you are powered by" line) at the first
@@ -661,6 +675,7 @@ export class ClaudeSupervisor {
           request.thinkingMode,
           abortDuringAdmission ? request.signal : undefined,
           cancellationSignal,
+          connection,
         )
       } catch (error) {
         await throwIfUnavailable()
@@ -986,6 +1001,7 @@ export class ClaudeSupervisor {
     thinkingMode?: ClaudeThinkingMode,
     signal?: AbortSignal,
     cancellationSignal?: AbortSignal,
+    connection?: ClaudeModelConnection,
   ): Promise<SupervisorEntry> {
     const sessionId = agent.id as string
     const cwd = agent.session.header.cwd ?? process.cwd()
@@ -1007,6 +1023,7 @@ export class ClaudeSupervisor {
       ownerAgent: agent,
       cwd,
       model,
+      connection,
       thinkingMode,
       permissionMode,
       state: 'starting' as ClaudeSupervisorState,
@@ -1043,7 +1060,8 @@ export class ClaudeSupervisor {
     const options: ClaudeOptions = {
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,
-      settingSources: ['user', 'project', 'local'],
+      // DSH connections must not inherit endpoint/auth overrides from Claude settings.
+      settingSources: connection === undefined ? ['user', 'project', 'local'] : [],
       systemPrompt: { type: 'preset', preset: 'claude_code', append: PLAN_MODE_HANDOFF_PROMPT },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
@@ -1053,14 +1071,14 @@ export class ClaudeSupervisor {
       abortController: lifetime,
       spawnClaudeCodeProcess: createManagedClaudeSpawner(this.#runtime, this.#config.executablePath, process => {
         entry.process = process
-      }),
+      }, connection?.env),
       ...(binding === undefined || startFresh ? {} : {
         resume: binding.claudeSessionId,
         ...(forkAt === undefined ? {} : { resumeSessionAt: forkAt }),
       }),
       // `model` is the selector alias DSH persists; the CLI is given the id
       // that alias currently stands for.
-      model: claudeModelValue(model),
+      model: connection?.model ?? claudeModelValue(model),
       ...(thinkingMode === undefined
         ? {}
         : thinkingMode === 'off'

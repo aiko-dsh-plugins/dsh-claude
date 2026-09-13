@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CLAUDE_CODE_PRESET_ID } from '../src/constants.ts'
 import { mountClaudeMetadata } from '../src/index.ts'
@@ -42,6 +42,26 @@ function createAgent() {
 }
 
 describe('metadata bridge', () => {
+  it('waits for model admission and omits personal Claude plan queries for DSH models', async () => {
+    const host = createHostContext()
+    const { agent } = createAgent()
+    const supervisor = {
+      snapshots: () => [{ sessionId: 'agent-1', provider: 'deepseek-official' }],
+      supportedCommands: vi.fn(async () => []),
+      contextUsage: vi.fn(async () => ({})),
+      planUsage: vi.fn(),
+    } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+    const sidecar = { writeContextUsage: vi.fn() } as unknown as ClaudeSidecarRepository
+    const skipped = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, undefined, () => ({ list: () => [] }), () => false)
+    await skipped?.()
+    expect(supervisor.supportedCommands).not.toHaveBeenCalled()
+    const active = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, undefined, () => ({ list: () => [] }))
+    onTestFinished(() => active?.())
+    await vi.waitFor(() => expect(sidecar.writeContextUsage).toHaveBeenCalled())
+    await active?.()
+    expect(supervisor.planUsage).not.toHaveBeenCalled()
+  })
+
   it('publishes the Claude catalog without registering a Host command', async () => {
     const host = createHostContext()
     const { agent: catalogAgent } = createAgent()
@@ -50,6 +70,7 @@ describe('metadata bridge', () => {
       list: () => [],
     }
     const supervisor = {
+      snapshots: () => [],
       supportedCommands: vi.fn(async () => [{
         name: 'awesome-skills:ci-deploy',
         description: 'Deploy through CI',
@@ -97,6 +118,7 @@ describe('metadata bridge', () => {
     const host = createHostContext()
     const { agent } = createAgent()
     const supervisor = {
+      snapshots: () => [],
       supportedCommands: vi.fn(async () => []),
       contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0.5, categories: [] })),
       planUsage: vi.fn(async () => ({
@@ -124,6 +146,7 @@ describe('metadata bridge', () => {
     const resolveCommands = vi.fn(() => service)
 
     const supervisor = {
+      snapshots: () => [],
       supportedCommands: vi.fn(async () => [{
         name: 'review',
         description: 'Review current changes',

@@ -1,7 +1,7 @@
 {
   "name": "@norman-else/dsh-claude",
   "description": "Run the local Claude Code CLI as a first-class main conversation inside DeepSeek Harness",
-  "version": "0.1.51-aiko.1",
+  "version": "0.1.51-aiko.2",
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
@@ -107,7 +107,11 @@
     "@deepseek-ai/dsh-user-questions": "0.1.5-alpha.2 || >=0.1.5-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-launch-environment": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-credentials": "0.1.5-alpha.2 || >=0.1.5-rc.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
@@ -218,6 +222,8 @@
     "tsdown": "^0.22.14",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-launch-environment": "0.1.5-rc.1"
   }
 }

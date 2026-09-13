@@ -4,6 +4,8 @@ Status: implemented; persistence and background-task presentation amended
 Date: 2026-08-15
 Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 
+Aiko implementation: [DSH model connections](../../../AIKO.md#dsh-model-connections) use the public llm/stream, settings and credentials services. Connection resolution, credential isolation, query recreation/resume, model selection and native UI are covered by focused tests and an authenticated web-profile smoke.
+
 ## Scope check
 
 ### Facts
