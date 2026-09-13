@@ -1,7 +1,7 @@
 {
   "name": "@norman-else/dsh-claude",
   "description": "Run the local Claude Code CLI as a first-class main conversation inside DeepSeek Harness",
-  "version": "0.1.51",
+  "version": "0.1.51-aiko.1",
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
@@ -36,16 +36,17 @@
     "cordis.patch.yml",
     "README.md",
     "INSTALL.md",
-    "LICENSE"
+    "LICENSE",
+    "AIKO.md"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Norman-else/dsh-claude.git"
+    "url": "git+https://github.com/aiko-dsh-plugins/dsh-claude.git"
   },
-  "homepage": "https://github.com/Norman-else/dsh-claude#readme",
+  "homepage": "https://github.com/aiko-dsh-plugins/dsh-claude#readme",
   "bugs": {
-    "url": "https://github.com/Norman-else/dsh-claude/issues"
+    "url": "https://github.com/aiko-dsh-plugins/dsh-claude/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -82,28 +83,28 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-agent-presets": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-attachment": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-brand": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-presets": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-brand": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-alpha.2 || >=0.1.5-rc.1",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2",
-    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-input-trigger": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar-right": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-commands": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-home-paths": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-session": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-subprocess": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-timeout": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-user-approval": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-user-questions": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-input-trigger": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-commands": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-home-paths": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-subprocess": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-timeout": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-user-approval": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-user-questions": "0.1.5-alpha.2 || >=0.1.5-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

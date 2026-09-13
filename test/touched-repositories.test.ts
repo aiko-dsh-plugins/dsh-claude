@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from '../src/touched-repositories.ts'
@@ -74,13 +75,15 @@ describe('touched repository roots', () => {
   })
 
   it('ignores a repository that contains the session checkout, such as a dotfiles home directory', async () => {
+    const home = resolve('/home/n')
+    const project = join(home, 'repo-a')
     const rootOf = async (directory: string): Promise<string | undefined> => (
-      directory.startsWith('/home/n/repo-a') ? '/home/n/repo-a' : directory.startsWith('/home/n') ? '/home/n' : undefined
+      directory.startsWith(project) ? project : directory.startsWith(home) ? home : undefined
     )
-    await expect(touchedRepositoryRoots(['/home/n/.zshrc', '/home/n/notes/x.md'], '/home/n/repo-a', rootOf, 8, async () => false)).resolves.toEqual([])
-    // A repository nested inside the session checkout is still its own.
-    const nested = async (directory: string): Promise<string | undefined> => (directory.startsWith('/home/n/repo-a/vendor/lib') ? '/home/n/repo-a/vendor/lib' : '/home/n/repo-a')
-    await expect(touchedRepositoryRoots(['/home/n/repo-a/vendor/lib/x.ts'], '/home/n/repo-a', nested, 8, async () => false)).resolves.toEqual(['/home/n/repo-a/vendor/lib'])
+    await expect(touchedRepositoryRoots([join(home, '.zshrc'), join(home, 'notes', 'x.md')], project, rootOf, 8, async () => false)).resolves.toEqual([])
+    const library = join(project, 'vendor', 'lib')
+    const nested = async (directory: string): Promise<string | undefined> => directory.startsWith(library) ? library : project
+    await expect(touchedRepositoryRoots([join(library, 'x.ts')], project, nested, 8, async () => false)).resolves.toEqual([library])
   })
 
   it('probes a directory path itself, so a checkout named whole in a command resolves to its own root', async () => {

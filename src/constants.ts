@@ -40,7 +40,7 @@ export const CLAUDE_PROMPT_REFINE_PATH = '/plugins/dsh-claude/prompts/refine'
  *  presentation pipeline draws them exactly like DSH-executed calls. */
 export type ClaudeRenderMode = 'plugin' | 'native'
 export const CLAUDE_RENDER_MODES = ['plugin', 'native'] as const
-export const DEFAULT_CLAUDE_RENDER_MODE: ClaudeRenderMode = 'plugin'
+export const DEFAULT_CLAUDE_RENDER_MODE: ClaudeRenderMode = 'native'
 
 export function isClaudeRenderMode(value: unknown): value is ClaudeRenderMode {
   return value === 'plugin' || value === 'native'

@@ -252,7 +252,7 @@ describe('DSH stream mapping', () => {
       { type: 'text-delta', text: 'lo' },
       { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1 } },
       { type: 'complete', text: 'hello' },
-    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, () => [], async () => 'plugin')
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([
@@ -270,7 +270,7 @@ describe('DSH stream mapping', () => {
       { type: 'text-delta', text: 'All tasks completed.' },
       { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
       { type: 'complete', text: 'All tasks completed.' },
-    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, () => [], async () => 'plugin')
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([
@@ -306,7 +306,7 @@ describe('DSH stream mapping', () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([{ type: 'text-delta', text: 'partial' }], abort), {
       currentInitiator: () => agent,
       get: () => agent,
-    }, attachmentStore(), claudePreset)
+    }, attachmentStore(), claudePreset, () => [], async () => 'plugin')
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([

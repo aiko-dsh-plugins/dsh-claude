@@ -70,6 +70,16 @@ describe('summarizeSessionTitle', () => {
       .catch(() => undefined)
     expect(options?.abortController?.signal.aborted).toBe(true)
   })
+
+  it('does not use an authentication error as a session title', async () => {
+    const errorText = 'Failed to authenticate. API Error: 403 Request not allowed'
+    await expect(summarizeSessionTitle('', { input: INPUT }, () => fakeQuery({
+      ...success(errorText), is_error: true,
+    }))).rejects.toThrow(/produced no title/)
+    await expect(summarizeSessionTitle('', { input: INPUT }, () => fakeQuery(
+      { type: 'assistant', error: 'authentication_failed' }, success(errorText),
+    ))).rejects.toThrow(/produced no title/)
+  })
 })
 
 describe('Claude Code adapter session titles', () => {

@@ -5,6 +5,7 @@ coverage/
 dist-pack/
 *.tgz
 .DS_Store
+.aiko-*.log
 
 # Never commit tsc emit artifacts beside source (typecheck runs with noEmit).
 src/**/*.js

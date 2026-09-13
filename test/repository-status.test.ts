@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { DSHWEB_FUNCNAME } from '../src/diff-funcname.ts'
@@ -412,9 +412,9 @@ describe('repository root lookup', () => {
       { stdout: '', exitCode: 128 },
     ])
     const service = new RepositoryStatusService(fake, 60_000)
-    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+    await expect(service.rootOf('/repo/src')).resolves.toBe(resolve('/repo'))
     await expect(service.rootOf('/tmp')).resolves.toBeUndefined()
-    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+    await expect(service.rootOf('/repo/src')).resolves.toBe(resolve('/repo'))
     await expect(service.rootOf('/tmp')).resolves.toBeUndefined()
     expect(fake.spawn).toHaveBeenCalledTimes(2)
     expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({ cwd: '/repo/src', argv: ['/bin/git', 'rev-parse', '--path-format=absolute', '--show-toplevel'] })
@@ -426,7 +426,7 @@ describe('repository root lookup', () => {
       .mockImplementationOnce(() => handle('/repo\n'))
     const service = new RepositoryStatusService({ spawn, resolveExecutable: async (name: string) => `/bin/${name}` }, 60_000)
     await expect(service.rootOf('/repo/src')).resolves.toBeUndefined()
-    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+    await expect(service.rootOf('/repo/src')).resolves.toBe(resolve('/repo'))
   })
 })
 

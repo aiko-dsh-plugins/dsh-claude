@@ -1,5 +1,7 @@
 # dsh-claude
 
+This is the Aiko fork of [Norman-else/dsh-claude](https://github.com/Norman-else/dsh-claude). See [Aiko integration](AIKO.md) for the tested Host version, native interface defaults, and local installation. The npm installation below installs the upstream edition.
+
 ## 1. Overview
 
 `dsh-claude` runs the locally installed Claude Code CLI as a first-class conversation provider inside DeepSeek Harness (DSH). It uses Claude Code's official Agent SDK protocol instead of recreating the agent with a separate API client.
@@ -10,7 +12,7 @@ Claude Code remains responsible for its agent loop, tools, `CLAUDE.md`, Skills, 
 
 ### Requirements
 
-- DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.5-rc.1` package line (DSH Desktop 2.0.7). Plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`; a Host still on that line must pin `@norman-else/dsh-claude@0.1.36`.
+- Aiko DSH `0.1.5-alpha.2` with the native workbench extension, or DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.5-rc.1` package line (DSH Desktop 2.0.7). Plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`; a Host still on that line must pin `@norman-else/dsh-claude@0.1.36`.
 - A local Claude Code installation that is already authenticated.
 - Node.js 20 or later when installing from a source checkout.
 
@@ -82,7 +84,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Rewind** — Drops a message and everything after it: Claude resumes from the kept turn's transcript anchor and genuinely forgets the discarded turns, the discarded rows are hidden from the append-only DSH log, and the original text returns to the composer for editing and resending. Every turn is admitted against a captured working tree, so the same rewind optionally puts the checkout back to where the discarded turns found it — files created since are removed, changed files are restored, and files `.gitignore` covers are left alone.
 - **Ask about a selection** — Answers a question about any selected text through a read-only side query limited to `Read`, `Grep`, and `Glob`, reusing the session's model and thinking mode, with the answer copyable or sendable into the main conversation.
 - **Redacted activity timeline** — Displays thinking summaries, tool calls and results, permission events, questions, status changes, usage, errors, and subagent activity without persisting credentials.
-- **Selectable AI output renderer** — Draws Claude's output either with this plugin's own transcript (interleaved prose, grouped tool cards, activity rows) or with DSH's native conversation renderer, where prose arrives as ordinary assistant text blocks, thinking as reasoning blocks, and root Claude tools as native tool cards (terminal, diff, search, read). Chosen in Settings and applied from the next turn; the plugin transcript remains the default, and turns already recorded keep the renderer that drew them.
+- **Selectable AI output renderer** — Draws Claude's output either with this plugin's own transcript (interleaved prose, grouped tool cards, activity rows) or with DSH's native conversation renderer, where prose arrives as ordinary assistant text blocks, thinking as reasoning blocks, and root Claude tools as native tool cards (terminal, diff, search, read). Chosen in Settings and applied from the next turn; the native renderer is the Aiko default, and turns already recorded keep the renderer that drew them.
 - **Background task tracking** — Shows running and completed Claude subagents or background tasks with task status, recent tools, and expandable activity.
 - **Context usage** — Tracks how much of the context window a session has consumed and surfaces it as a percentage in the conversation and on the session board.
 - **Turn accounting** — Closes each turn the plugin transcript drew with the footer DSH gives only its own messages: tokens, cache hit rate, wall time, time to first token, and cumulative cost. The timings are measured as the turn runs, because activity records carry no clock of their own.

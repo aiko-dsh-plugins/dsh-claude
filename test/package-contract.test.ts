@@ -47,10 +47,10 @@ describe('published package contract', () => {
     expect(dshPeers.length).toBeGreaterThan(0)
     for (const [name, range] of dshPeers) {
       expect(range, name).not.toBe('*')
-      expect(range, name).toBe(name === '@deepseek-ai/dsh-client-runtime' ? '>=0.1.1-rc.2' : '>=0.1.5-rc.1')
+      expect(range, name).toBe(name === '@deepseek-ai/dsh-client-runtime' ? '>=0.1.1-rc.2' : '0.1.5-alpha.2 || >=0.1.5-rc.1')
     }
-    expect(packageJson.peerDependencies['@deepseek-ai/dsh-llm']).toBe('>=0.1.5-rc.1')
-    expect(packageJson.peerDependencies['@deepseek-ai/dsh-session']).toBe('>=0.1.5-rc.1')
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-llm']).toBe('0.1.5-alpha.2 || >=0.1.5-rc.1')
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-session']).toBe('0.1.5-alpha.2 || >=0.1.5-rc.1')
     expect(dshDevelopmentVersions.length).toBeGreaterThan(0)
     // The Desktop 2.0.7 graph is 0.1.5-rc.1 except for the two packages that
     // never got that release; the Host ships the same pair, so a stray third

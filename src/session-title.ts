@@ -86,7 +86,11 @@ export async function summarizeSessionTitle(
       },
     })
     for await (const message of query) {
+      if (message.type === 'assistant' && message.error !== undefined) {
+        throw new Error('dsh-claude: the session-title turn produced no title')
+      }
       if (message.type !== 'result' || message.subtype !== 'success') continue
+      if (message.is_error) break
       const title = sessionTitleLine(message.result)
       if (title.length > 0) return title
       break

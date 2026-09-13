@@ -58,6 +58,8 @@ export interface Config {
   model?: string
   idleTimeoutMs?: number
   maxProcesses?: number
+  /** Opt into upstream browser chrome and repository controls. */
+  enhancedInterface?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -65,6 +67,7 @@ export const Config: z<Config> = z.object({
   model: z.string().default('default'),
   idleTimeoutMs: z.number().min(1_000).max(2_147_483_647).default(30 * 60 * 1_000),
   maxProcesses: z.number().step(1).min(1).default(4),
+  enhancedInterface: z.boolean().default(false),
 })
 
 const CLAUDE_SCOPE_UNAVAILABLE_MESSAGE = 'agent command scope unavailable (preset route not mounted?)'

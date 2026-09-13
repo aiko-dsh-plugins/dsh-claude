@@ -101,7 +101,10 @@ function sessionInput(conversation: IConversation, scope: SessionScope): Session
   return conversation.input.for(scope as never)
 }
 
-export function apply(ctx: ClientContext): void {
+/** Optional extra repository controls; Aiko keeps the native Host interface by default. */
+export interface Config { enhancedInterface?: boolean }
+
+export function apply(ctx: ClientContext, config: Config = {}): void {
   const namespace = 'settings.claude-code'
   const diagnostics = createClaudeDiagnosticsReporter()
   // Assert the Host still matches this package's assumptions. The Desktop build
@@ -115,12 +118,12 @@ export function apply(ctx: ClientContext): void {
   // The scoped custom properties cannot be read here: the Host publishes them
   // onto the composer subtree, and inheritance means only an element inside it
   // sees one. Probe the plugin's own bar once it mounts instead.
-  ctx.effect(() => watchClaudeComposerBar(finding => {
+  if (config.enhancedInterface) ctx.effect(() => watchClaudeComposerBar(finding => {
     diagnostics.report('boot-check', finding)
   }), 'dsh-claude: composer style drift probe')
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
-  ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
+  if (config.enhancedInterface) ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
   // The prose palette is a Client-side setting the Settings panel may never be
   // opened to deliver, so read it once at boot. Deliberately unawaited and
   // silently swallowed: a Host that cannot answer leaves the sheet on its
@@ -141,7 +144,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   // ponytail: the group title is fixed at registration, so a language switch
   // needs a reload to relabel it; subscribe to the locale if anyone minds.
-  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudePromptSource(t('promptSource'))), 'dsh-claude: Claude prompt source')
+  if (config.enhancedInterface) ctx.effect(() => ctx.inputTriggers.registerSource(createClaudePromptSource(t('promptSource'))), 'dsh-claude: Claude prompt source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   // Desktop 0.1.2 split the Workspace runtime in two: the `workspaces`
@@ -286,355 +289,357 @@ ${error.stack ?? ''}`
       openTasks: turn => openTasksPanel(sessionId, turn),
     }),
   }, ClaudeActivityTail))
-  // Icon-only diff trigger in the Session header's right-aligned utility
-  // group. The action row next to the title is left-aligned (it rides inside
-  // the flex:1 title cluster), so the utilities group is the actual top-right
-  // corner — the seat the Host's hidden Session log capsule used to hold.
-  // Shadow the Host's header preset label: same slot id, lower priority, so
-  // one cell renders and it is this one. Only two things change — the native
-  // `title` popup becomes the DSH tooltip bubble, and the Claude preset gets
-  // its own mark instead of the generic preset glyph. Everything else is
-  // reproduced, because this entry renders in every Session, not only
-  // plugin-owned ones.
-  if (remote !== undefined) {
-    const roster = new AgentPresetRoster(remote.agentPresets as AgentPresetRosterApi)
-    const hostT = ctx.locale.bind('settings.agentPreset')
-    ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'agent-preset',
-      order: -10,
-      priority: -10,
+  if (config.enhancedInterface) {
+    // Icon-only diff trigger in the Session header's right-aligned utility
+    // group. The action row next to the title is left-aligned (it rides inside
+    // the flex:1 title cluster), so the utilities group is the actual top-right
+    // corner — the seat the Host's hidden Session log capsule used to hold.
+    // Shadow the Host's header preset label: same slot id, lower priority, so
+    // one cell renders and it is this one. Only two things change — the native
+    // `title` popup becomes the DSH tooltip bubble, and the Claude preset gets
+    // its own mark instead of the generic preset glyph. Everything else is
+    // reproduced, because this entry renders in every Session, not only
+    // plugin-owned ones.
+    if (remote !== undefined) {
+      const roster = new AgentPresetRoster(remote.agentPresets as AgentPresetRosterApi)
+      const hostT = ctx.locale.bind('settings.agentPreset')
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+        name: 'conversation.session.header.actions',
+        id: 'agent-preset',
+        order: -10,
+        priority: -10,
+        locale: namespace,
+        inject: (): ClaudeAgentPresetLabelInjected => ({
+          t,
+          hostT: key => hostT(key as never),
+          roster: { subscribe: roster.subscribe, getSnapshot: roster.getSnapshot, load: () => roster.load() },
+        }),
+      }, ClaudeAgentPresetLabel))
+    }
+    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'claude-plan',
+      order: 29,
       locale: namespace,
-      inject: (): ClaudeAgentPresetLabelInjected => ({
+      inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
         t,
-        hostT: key => hostT(key as never),
-        roster: { subscribe: roster.subscribe, getSnapshot: roster.getSnapshot, load: () => roster.load() },
+        togglePlan: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.plan, sessionId, {}) },
+        planOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.plan, sessionId),
       }),
-    }, ClaudeAgentPresetLabel))
-  }
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
-    id: 'claude-plan',
-    order: 29,
-    locale: namespace,
-    inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
-      t,
-      togglePlan: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.plan, sessionId, {}) },
-      planOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.plan, sessionId),
-    }),
-  }, ClaudePlanHeaderAction))
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
-    id: 'claude-diff',
-    order: 30,
-    locale: namespace,
-    inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
-      t,
-      toggleDiff: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.diff, sessionId, {}) },
-      diffOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.diff, sessionId),
-    }),
-  }, ClaudeDiffHeaderAction))
-  // In the composer's own tool row beside the attach and access controls: the
-  // owner hands this slot the live draft, and an icon there costs the layout
-  // nothing, where a docked row would move the composer on every keystroke.
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left',
-    id: 'claude-prompt-save',
-    order: 40,
-    locale: namespace,
-    inject: (): ClaudePromptSaveActionInjected => ({ t }),
-  }, ClaudePromptSaveAction))
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left',
-    id: 'claude-prompt-refine',
-    order: 41,
-    locale: namespace,
-    inject: (sessionId: string): ClaudePromptRefineActionInjected => {
-      if (sessions === undefined || conversation === undefined) return { t }
-      const scope = sessions.scope(sessionId as SessionId)
-      if (scope === undefined) return { t }
-      const facade = sessionInput(conversation, scope)
-      return {
+    }, ClaudePlanHeaderAction))
+    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'claude-diff',
+      order: 30,
+      locale: namespace,
+      inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
         t,
-        replaceDraft: text => { facade.setDraft(text) },
-        notify: (level, text) => { facade.notify(level, text) },
-      }
-    },
-  }, ClaudePromptRefineAction))
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-    name: 'conversation.input.dock',
-    id: 'claude-review-comments',
-    // Topmost dock row: pending comments render above DSH's QueueDock (20)
-    // and the repository status readout (20.5).
-    order: 18,
-    locale: namespace,
-    inject: (sessionId: string): ClaudeReviewCommentsInjected => ({
-      t,
-      sessionId,
-      ...(sessions === undefined || conversation === undefined ? {} : {
-        submitWith: (fallbackDraft: string) => {
+        toggleDiff: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.diff, sessionId, {}) },
+        diffOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.diff, sessionId),
+      }),
+    }, ClaudeDiffHeaderAction))
+    // In the composer's own tool row beside the attach and access controls: the
+    // owner hands this slot the live draft, and an icon there costs the layout
+    // nothing, where a docked row would move the composer on every keystroke.
+    ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+      name: 'conversation.input.left',
+      id: 'claude-prompt-save',
+      order: 40,
+      locale: namespace,
+      inject: (): ClaudePromptSaveActionInjected => ({ t }),
+    }, ClaudePromptSaveAction))
+    ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+      name: 'conversation.input.left',
+      id: 'claude-prompt-refine',
+      order: 41,
+      locale: namespace,
+      inject: (sessionId: string): ClaudePromptRefineActionInjected => {
+        if (sessions === undefined || conversation === undefined) return { t }
+        const scope = sessions.scope(sessionId as SessionId)
+        if (scope === undefined) return { t }
+        const facade = sessionInput(conversation, scope)
+        return {
+          t,
+          replaceDraft: text => { facade.setDraft(text) },
+          notify: (level, text) => { facade.notify(level, text) },
+        }
+      },
+    }, ClaudePromptRefineAction))
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+      name: 'conversation.input.dock',
+      id: 'claude-review-comments',
+      // Topmost dock row: pending comments render above DSH's QueueDock (20)
+      // and the repository status readout (20.5).
+      order: 18,
+      locale: namespace,
+      inject: (sessionId: string): ClaudeReviewCommentsInjected => ({
+        t,
+        sessionId,
+        ...(sessions === undefined || conversation === undefined ? {} : {
+          submitWith: (fallbackDraft: string) => {
+            const scope = sessions.scope(sessionId as SessionId)
+            if (scope === undefined) return
+            const input = sessionInput(conversation, scope)
+            if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
+            input.submit()
+          },
+        }),
+      }),
+    }, ClaudeReviewComments))
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+      name: 'conversation.input.dock',
+      id: 'claude-repository-status',
+      // Below DSH's QueueDock (20) and above the hero controls (21), so the
+      // dock stacks comments (18) → queue (20) → repository readout.
+      order: 20.5,
+      locale: namespace,
+      inject: (sessionId: string): ClaudeRepositoryStatusInjected => {
+        const submitPrompt = submitPromptFor(sessionId)
+        return {
+          t,
+          openDiff: root => openDiffPanel(sessionId, root),
+          ...(submitPrompt === undefined ? {} : { submitPrompt }),
+          ...(sessions === undefined ? {} : { openOverview: () => openOverviewPanel(sessionId) }),
+          ...(workspaces === undefined ? {} : {
+            deleteWorkspace: async () => {
+              const workspace = workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sessionId as SessionId))
+              if (workspace === undefined) return
+              // Deleting a workspace drops its sessions into the unaccounted
+              // group, so archive them first -- DSH's "delete session" is an
+              // archive, and the worktree they point at is already gone.
+              for (const id of workspace.sessionIds) await workspaces.archiveSession(id)
+              await workspaces.delete(workspace.workspaceId)
+            },
+          }),
+        }
+      },
+    }, ClaudeRepositoryStatus))
+    // Selection toolbar over assistant replies (copy / ask a follow-up). Root
+    // scoped: it resolves the on-screen session itself and only arms inside
+    // sessions this plugin owns.
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'claude-selection-ask',
+      locale: namespace,
+    }, () => <ClaudeSelectionAsk
+      t={t}
+      currentSessionId={() => sessions?.list.getSnapshot().current as string | undefined}
+      ownsSession={sessionId => projections.source(sessionId).getSnapshot().owned}
+      {...(sessions === undefined || conversation === undefined ? {} : {
+        insertIntoChat: (sessionId: string, text: string) => {
           const scope = sessions.scope(sessionId as SessionId)
           if (scope === undefined) return
           const input = sessionInput(conversation, scope)
-          if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
-          input.submit()
+          const current = input.state.getSnapshot().draft
+          input.setDraft(current.trim() === '' ? text : `${current}\n\n${text}`)
         },
-      }),
-    }),
-  }, ClaudeReviewComments))
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-    name: 'conversation.input.dock',
-    id: 'claude-repository-status',
-    // Below DSH's QueueDock (20) and above the hero controls (21), so the
-    // dock stacks comments (18) → queue (20) → repository readout.
-    order: 20.5,
-    locale: namespace,
-    inject: (sessionId: string): ClaudeRepositoryStatusInjected => {
-      const submitPrompt = submitPromptFor(sessionId)
-      return {
+      })}
+    />))
+    /** Compose the chat view the rewind control reads.
+     *
+     *  Desktop 2.0 split what used to be one Session snapshot: the Controller's
+     *  `binding.session` kept `running`, while the assembled Chat nodes moved to
+     *  the Conversation binding's 'chat' target. Reading the old combined shape
+     *  threw on `snapshot.chat.order` and took the whole overlay entry down. */
+    const chatSourceCache = new Map<string, ClaudeChatSource>()
+    const claudeChatSource = (sessionId: string): ClaudeChatSource | undefined => {
+      const cached = chatSourceCache.get(sessionId)
+      if (cached !== undefined) return cached
+      if (sessions === undefined || uiConversation === undefined) return undefined
+      const session = sessions.binding(sessionId as SessionId)?.session as unknown as {
+        subscribe(listener: () => void): () => void
+        getSnapshot(): { running?: boolean }
+      } | undefined
+      if (session === undefined) return undefined
+      let chatTarget
+      try {
+        chatTarget = uiConversation.binding(sessionId).target('chat')
+      } catch {
+        return undefined
+      }
+      // useSyncExternalStore compares by identity, so the composed view must stay
+      // the same object until one of its two inputs actually moves.
+      let lastChat: unknown
+      let lastRunning: boolean | undefined
+      let view: ClaudeChatView = EMPTY_CHAT_VIEW
+      const source: ClaudeChatSource = {
+        subscribe(listener) {
+          const dropChat = chatTarget.subscribe(listener)
+          const dropSession = session.subscribe(listener)
+          return () => { dropChat(); dropSession() }
+        },
+        getSnapshot() {
+          const chat = chatTarget.getSnapshot()
+          const running = session.getSnapshot().running === true
+          if (chat === lastChat && running === lastRunning) return view
+          lastChat = chat
+          lastRunning = running
+          view = chat === undefined
+            ? EMPTY_CHAT_VIEW
+            : { chat: chat as ClaudeChatView['chat'], running }
+          return view
+        },
+      }
+      chatSourceCache.set(sessionId, source)
+      return source
+    }
+    // "Rewind to here" beside the copy action of every user message. Root
+    // scoped like the selection toolbar: it resolves the on-screen session
+    // itself and only arms inside sessions this plugin owns.
+    if (sessions !== undefined) {
+      // Stable prop identities: the control subscribes to them, so a re-render
+      // of the seat must not tear down and rebuild every subscription.
+      const rewind: ClaudeRewindInjected = {
         t,
-        openDiff: root => openDiffPanel(sessionId, root),
-        ...(submitPrompt === undefined ? {} : { submitPrompt }),
-        ...(sessions === undefined ? {} : { openOverview: () => openOverviewPanel(sessionId) }),
-        ...(workspaces === undefined ? {} : {
-          deleteWorkspace: async () => {
-            const workspace = workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sessionId as SessionId))
-            if (workspace === undefined) return
-            // Deleting a workspace drops its sessions into the unaccounted
-            // group, so archive them first -- DSH's "delete session" is an
-            // archive, and the worktree they point at is already gone.
-            for (const id of workspace.sessionIds) await workspaces.archiveSession(id)
-            await workspaces.delete(workspace.workspaceId)
+        currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
+        subscribeSessions: listener => sessions.list.subscribe(listener),
+        chatOf: sessionId => claudeChatSource(sessionId),
+        projectionOf: sessionId => projections.source(sessionId),
+        ...(conversation === undefined ? {} : {
+          setDraft: (sessionId: string, text: string) => {
+            const scope = sessions.scope(sessionId as SessionId)
+            if (scope === undefined) return
+            sessionInput(conversation, scope).setDraft(text)
           },
         }),
       }
-    },
-  }, ClaudeRepositoryStatus))
-  // Selection toolbar over assistant replies (copy / ask a follow-up). Root
-  // scoped: it resolves the on-screen session itself and only arms inside
-  // sessions this plugin owns.
-  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-    name: 'shell.overlay',
-    id: 'claude-selection-ask',
-    locale: namespace,
-  }, () => <ClaudeSelectionAsk
-    t={t}
-    currentSessionId={() => sessions?.list.getSnapshot().current as string | undefined}
-    ownsSession={sessionId => projections.source(sessionId).getSnapshot().owned}
-    {...(sessions === undefined || conversation === undefined ? {} : {
-      insertIntoChat: (sessionId: string, text: string) => {
-        const scope = sessions.scope(sessionId as SessionId)
-        if (scope === undefined) return
-        const input = sessionInput(conversation, scope)
-        const current = input.state.getSnapshot().draft
-        input.setDraft(current.trim() === '' ? text : `${current}\n\n${text}`)
-      },
-    })}
-  />))
-  /** Compose the chat view the rewind control reads.
-   *
-   *  Desktop 2.0 split what used to be one Session snapshot: the Controller's
-   *  `binding.session` kept `running`, while the assembled Chat nodes moved to
-   *  the Conversation binding's 'chat' target. Reading the old combined shape
-   *  threw on `snapshot.chat.order` and took the whole overlay entry down. */
-  const chatSourceCache = new Map<string, ClaudeChatSource>()
-  const claudeChatSource = (sessionId: string): ClaudeChatSource | undefined => {
-    const cached = chatSourceCache.get(sessionId)
-    if (cached !== undefined) return cached
-    if (sessions === undefined || uiConversation === undefined) return undefined
-    const session = sessions.binding(sessionId as SessionId)?.session as unknown as {
-      subscribe(listener: () => void): () => void
-      getSnapshot(): { running?: boolean }
-    } | undefined
-    if (session === undefined) return undefined
-    let chatTarget
-    try {
-      chatTarget = uiConversation.binding(sessionId).target('chat')
-    } catch {
-      return undefined
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay',
+        id: 'claude-rewind',
+        locale: namespace,
+      }, () => <ClaudeRewind {...rewind} />))
     }
-    // useSyncExternalStore compares by identity, so the composed view must stay
-    // the same object until one of its two inputs actually moves.
-    let lastChat: unknown
-    let lastRunning: boolean | undefined
-    let view: ClaudeChatView = EMPTY_CHAT_VIEW
-    const source: ClaudeChatSource = {
-      subscribe(listener) {
-        const dropChat = chatTarget.subscribe(listener)
-        const dropSession = session.subscribe(listener)
-        return () => { dropChat(); dropSession() }
-      },
-      getSnapshot() {
-        const chat = chatTarget.getSnapshot()
-        const running = session.getSnapshot().running === true
-        if (chat === lastChat && running === lastRunning) return view
-        lastChat = chat
-        lastRunning = running
-        view = chat === undefined
-          ? EMPTY_CHAT_VIEW
-          : { chat: chat as ClaudeChatView['chat'], running }
-        return view
-      },
-    }
-    chatSourceCache.set(sessionId, source)
-    return source
-  }
-  // "Rewind to here" beside the copy action of every user message. Root
-  // scoped like the selection toolbar: it resolves the on-screen session
-  // itself and only arms inside sessions this plugin owns.
-  if (sessions !== undefined) {
-    // Stable prop identities: the control subscribes to them, so a re-render
-    // of the seat must not tear down and rebuild every subscription.
-    const rewind: ClaudeRewindInjected = {
-      t,
-      currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
-      subscribeSessions: listener => sessions.list.subscribe(listener),
-      chatOf: sessionId => claudeChatSource(sessionId),
-      projectionOf: sessionId => projections.source(sessionId),
-      ...(conversation === undefined ? {} : {
-        setDraft: (sessionId: string, text: string) => {
-          const scope = sessions.scope(sessionId as SessionId)
-          if (scope === undefined) return
-          sessionInput(conversation, scope).setDraft(text)
-        },
-      }),
-    }
-    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-      name: 'shell.overlay',
-      id: 'claude-rewind',
-      locale: namespace,
-    }, () => <ClaudeRewind {...rewind} />))
-  }
 
-  if (sessions !== undefined && conversation !== undefined) {
-    // Shadow the Host queue strip: list-slot entries sharing an id form one
-    // cell and the lowest priority renders, so this replaces it app-wide with
-    // a strip that matches the repository status bar.
-    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-      name: 'conversation.input.dock',
-      id: 'queue',
-      order: 20,
-      priority: -10,
-      locale: namespace,
-      inject: (sessionId: string): ClaudeQueueDockInjected => {
-        const scope = sessions.scope(sessionId as SessionId)
-        const scoped = scope === undefined ? undefined : (scope as unknown as { get(name: string): unknown }).get('conversation') as IConversation | undefined
-        const target = scoped ?? conversation
-        return {
-          t,
-          updateQueue: (itemId, action) => target.updateQueue(itemId as never, action as never),
-          notify: (level, text) => { if (scope !== undefined) sessionInput(conversation, scope).notify(level, text) },
-        }
-      },
-    }, ClaudeQueueDock))
-  }
-  if (sessions !== undefined && workspaces !== undefined && connectWorkspace !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
-    /** Attach a prepared worktree to its session without blocking the flow. */
-    const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
-      if (leaseId === undefined) return
-      void bindRepositoryLease(leaseId, targetSessionId).catch((reason: unknown) => {
-        console.warn(`dsh-claude: could not bind the worktree lease: ${reason instanceof Error ? reason.message : String(reason)}`)
-      })
-    }
-    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-      name: 'conversation.input.dock',
-      id: 'claude-hero-repository-controls',
-      order: 21,
-      locale: namespace,
-      inject: (sourceSessionId: SessionId): ClaudeHeroRepositoryControlsInjected => ({
-        t,
-        prepare: async (cwd, branch, useWorktree, onProgress, ticket) => {
-          const sourceScope = sessions.scope(sourceSessionId)
-          if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const sourceInput = sessionInput(conversation, sourceScope)
-          const rawDraft = sourceInput.state.getSnapshot().draft
-          // Starting from a ticket seeds an empty composer with the ticket
-          // brief; a written draft keeps the user's words and gets the ticket
-          // appended as context so the session always knows its ticket.
-          const draft = ticket === undefined
-            ? rawDraft
-            : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
-          const imageIds = sourceInput.state.getSnapshot().attachmentIds
-          // No ticket to name the branch after: let the draft name it instead.
-          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress, ticket === undefined ? draft : undefined)
-          // The workspace is ready: take the ticket. Best-effort so a Jira
-          // hiccup never blocks the session from starting.
-          if (ticket !== undefined) {
-            void assignJiraTicket(ticket.key).catch((reason: unknown) => {
-              console.warn(`dsh-claude: could not assign ${ticket.key}: ${reason instanceof Error ? reason.message : String(reason)}`)
-            })
+    if (sessions !== undefined && conversation !== undefined) {
+      // Shadow the Host queue strip: list-slot entries sharing an id form one
+      // cell and the lowest priority renders, so this replaces it app-wide with
+      // a strip that matches the repository status bar.
+      ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+        name: 'conversation.input.dock',
+        id: 'queue',
+        order: 20,
+        priority: -10,
+        locale: namespace,
+        inject: (sessionId: string): ClaudeQueueDockInjected => {
+          const scope = sessions.scope(sessionId as SessionId)
+          const scoped = scope === undefined ? undefined : (scope as unknown as { get(name: string): unknown }).get('conversation') as IConversation | undefined
+          const target = scoped ?? conversation
+          return {
+            t,
+            updateQueue: (itemId, action) => target.updateQueue(itemId as never, action as never),
+            notify: (level, text) => { if (scope !== undefined) sessionInput(conversation, scope).notify(level, text) },
           }
-          if (prepared.mode === 'checkout') {
-            if (draft !== rawDraft) sourceInput.setDraft(draft)
-            sourceInput.submit()
-            return
-          }
-          onProgress('creating-workspace')
-          const workspace = await workspaces.create({ path: prepared.path })
-          onProgress('starting-session')
-          const targetSessionId = await connectWorkspace(workspace.workspaceId)
-          const targetScope = sessions.scope(targetSessionId)
-          if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
-          if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-          sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
-          const targetInput = sessionInput(conversation, targetScope)
-          onProgress('transferring-draft')
-          if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
-          if (draft !== '') targetInput.setDraft(draft)
-          // Lease bookkeeping only matters at cleanup time, so it rides
-          // alongside the submit the way the ticket assignment does. Awaiting
-          // it here once left the prepared worktree holding the user's typed
-          // message with no way to send it when the route was slow.
-          bindLease(prepared.leaseId, targetSessionId)
-          sessions.open(targetSessionId)
-          onProgress('submitting')
-          targetInput.submit()
-          sourceInput.setDraft('')
-          for (const imageId of imageIds) sourceInput.removeAttachment(imageId)
         },
-        prepareMany: async (cwd, branch, tickets, onProgress) => {
-          const sourceScope = sessions.scope(sourceSessionId)
-          if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const sourceInput = sessionInput(conversation, sourceScope)
-          // One shared draft applies to every ticket; images stay behind
-          // because a single attachment cannot be split across sessions.
-          const rawDraft = sourceInput.state.getSnapshot().draft
-          const failures: string[] = []
-          for (const [index, ticket] of tickets.entries()) {
-            const report = (stage: RepositoryPreparationStage): void => {
-              onProgress({ ticketKey: ticket.key, index, total: tickets.length, stage })
-            }
-            try {
-              report('inspecting')
-              const prepared = await prepareRepository(cwd, branch, true, ticket.key, report)
+      }, ClaudeQueueDock))
+    }
+    if (sessions !== undefined && workspaces !== undefined && connectWorkspace !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
+      /** Attach a prepared worktree to its session without blocking the flow. */
+      const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
+        if (leaseId === undefined) return
+        void bindRepositoryLease(leaseId, targetSessionId).catch((reason: unknown) => {
+          console.warn(`dsh-claude: could not bind the worktree lease: ${reason instanceof Error ? reason.message : String(reason)}`)
+        })
+      }
+      ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+        name: 'conversation.input.dock',
+        id: 'claude-hero-repository-controls',
+        order: 21,
+        locale: namespace,
+        inject: (sourceSessionId: SessionId): ClaudeHeroRepositoryControlsInjected => ({
+          t,
+          prepare: async (cwd, branch, useWorktree, onProgress, ticket) => {
+            const sourceScope = sessions.scope(sourceSessionId)
+            if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+            const sourceInput = sessionInput(conversation, sourceScope)
+            const rawDraft = sourceInput.state.getSnapshot().draft
+            // Starting from a ticket seeds an empty composer with the ticket
+            // brief; a written draft keeps the user's words and gets the ticket
+            // appended as context so the session always knows its ticket.
+            const draft = ticket === undefined
+              ? rawDraft
+              : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
+            const imageIds = sourceInput.state.getSnapshot().attachmentIds
+            // No ticket to name the branch after: let the draft name it instead.
+            const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress, ticket === undefined ? draft : undefined)
+            // The workspace is ready: take the ticket. Best-effort so a Jira
+            // hiccup never blocks the session from starting.
+            if (ticket !== undefined) {
               void assignJiraTicket(ticket.key).catch((reason: unknown) => {
                 console.warn(`dsh-claude: could not assign ${ticket.key}: ${reason instanceof Error ? reason.message : String(reason)}`)
               })
-              report('creating-workspace')
-              const workspace = await workspaces.create({ path: prepared.path })
-              report('starting-session')
-              const targetSessionId = await connectWorkspace(workspace.workspaceId)
-              const targetScope = sessions.scope(targetSessionId)
-              if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-              const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
-              if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-              sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
-              const targetInput = sessionInput(conversation, targetScope)
-              report('transferring-draft')
-              targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
-              bindLease(prepared.leaseId, targetSessionId)
-              report('submitting')
-              targetInput.submit()
-            } catch (cause) {
-              failures.push(`${ticket.key}: ${cause instanceof Error ? cause.message : String(cause)}`)
             }
-          }
-          if (failures.length < tickets.length) sourceInput.setDraft('')
-          if (failures.length > 0) throw new Error(failures.join(' · '))
-        },
-      }),
-    }, ClaudeHeroRepositoryControls))
+            if (prepared.mode === 'checkout') {
+              if (draft !== rawDraft) sourceInput.setDraft(draft)
+              sourceInput.submit()
+              return
+            }
+            onProgress('creating-workspace')
+            const workspace = await workspaces.create({ path: prepared.path })
+            onProgress('starting-session')
+            const targetSessionId = await connectWorkspace(workspace.workspaceId)
+            const targetScope = sessions.scope(targetSessionId)
+            if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+            const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+            if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+            sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
+            const targetInput = sessionInput(conversation, targetScope)
+            onProgress('transferring-draft')
+            if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
+            if (draft !== '') targetInput.setDraft(draft)
+            // Lease bookkeeping only matters at cleanup time, so it rides
+            // alongside the submit the way the ticket assignment does. Awaiting
+            // it here once left the prepared worktree holding the user's typed
+            // message with no way to send it when the route was slow.
+            bindLease(prepared.leaseId, targetSessionId)
+            sessions.open(targetSessionId)
+            onProgress('submitting')
+            targetInput.submit()
+            sourceInput.setDraft('')
+            for (const imageId of imageIds) sourceInput.removeAttachment(imageId)
+          },
+          prepareMany: async (cwd, branch, tickets, onProgress) => {
+            const sourceScope = sessions.scope(sourceSessionId)
+            if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+            const sourceInput = sessionInput(conversation, sourceScope)
+            // One shared draft applies to every ticket; images stay behind
+            // because a single attachment cannot be split across sessions.
+            const rawDraft = sourceInput.state.getSnapshot().draft
+            const failures: string[] = []
+            for (const [index, ticket] of tickets.entries()) {
+              const report = (stage: RepositoryPreparationStage): void => {
+                onProgress({ ticketKey: ticket.key, index, total: tickets.length, stage })
+              }
+              try {
+                report('inspecting')
+                const prepared = await prepareRepository(cwd, branch, true, ticket.key, report)
+                void assignJiraTicket(ticket.key).catch((reason: unknown) => {
+                  console.warn(`dsh-claude: could not assign ${ticket.key}: ${reason instanceof Error ? reason.message : String(reason)}`)
+                })
+                report('creating-workspace')
+                const workspace = await workspaces.create({ path: prepared.path })
+                report('starting-session')
+                const targetSessionId = await connectWorkspace(workspace.workspaceId)
+                const targetScope = sessions.scope(targetSessionId)
+                if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+                const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+                if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+                sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
+                const targetInput = sessionInput(conversation, targetScope)
+                report('transferring-draft')
+                targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
+                bindLease(prepared.leaseId, targetSessionId)
+                report('submitting')
+                targetInput.submit()
+              } catch (cause) {
+                failures.push(`${ticket.key}: ${cause instanceof Error ? cause.message : String(cause)}`)
+              }
+            }
+            if (failures.length < tickets.length) sourceInput.setDraft('')
+            if (failures.length > 0) throw new Error(failures.join(' · '))
+          },
+        }),
+      }, ClaudeHeroRepositoryControls))
+    }
   }
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',

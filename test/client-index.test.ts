@@ -46,6 +46,9 @@ describe('Claude client slot registration', () => {
     expect(captured.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
     expect(captured.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
     expect(captured.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
+    expect(captured.registrations.some(entry => entry.name.startsWith('conversation.input.'))).toBe(false)
+    expect(captured.registrations.some(entry => entry.name.startsWith('conversation.hero.'))).toBe(false)
+    expect(captured.registrations.some(entry => entry.name === 'sidebar.workspaces')).toBe(false)
   })
 
   it('mounts the custom Claude definitions through the Desktop conversation service', () => {
@@ -87,7 +90,7 @@ describe('Claude client slot registration', () => {
       },
     }
 
-    apply(ctx as never)
+    apply(ctx as never, { enhancedInterface: true })
 
     expect(definitions).toHaveLength(3)
   })
@@ -129,7 +132,7 @@ describe('Claude client slot registration', () => {
       },
     }
 
-    apply(ctx as never)
+    apply(ctx as never, { enhancedInterface: true })
 
     const reviewComments = registrations.find(entry => entry.id === 'claude-review-comments')
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
@@ -193,7 +196,7 @@ describe('Claude client slot registration', () => {
       },
     }
 
-    apply(ctx as never)
+    apply(ctx as never, { enhancedInterface: true })
 
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
     const actions = repositoryStatus?.inject?.('session-1') as { deleteWorkspace(): Promise<void> }
@@ -262,7 +265,7 @@ describe('Claude client slot registration', () => {
       },
     }
 
-    apply(ctx as never)
+    apply(ctx as never, { enhancedInterface: true })
 
     // Host 0.1.5 has no details column: every panel is a tab type declared
     // once at apply time, with its body keyed the same way.
