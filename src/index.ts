@@ -1,3 +1,5 @@
+import { registerTaskControlRoute } from './task-control-routes.ts'
+import { DshCapabilities } from './dsh-capabilities.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import { dirname, join } from 'node:path'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -48,11 +50,11 @@ import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
 import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
-import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
-import { installDshModelRouting, resolveDshModelConnection } from './dsh-models.ts'
+import { readModelSettings, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { installDshModelRouting, listDshModelOptions, mappedRoleInfo, mappedRoleModels, resolveDshModelConnection } from './dsh-models.ts'
 
 export const name = 'llm-claude'
-export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
+export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments', 'tools']
 
 export interface Config {
   executablePath?: string
@@ -61,6 +63,14 @@ export interface Config {
   maxProcesses?: number
   /** Opt into upstream browser chrome and repository controls. */
   enhancedInterface?: boolean
+  /** Maximum serialized result bytes returned through the DSH capability bridge. */
+  capabilityMaxResultBytes?: number
+  /** Maximum Claude request body admitted by the DSH model transport. */
+  modelRequestMaxBytes?: number
+  /** Maximum streamed provider response admitted by the DSH model transport. */
+  modelResponseMaxBytes?: number
+  /** Deadline for one inner Claude model request. */
+  modelRequestTimeoutMs?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -69,6 +79,10 @@ export const Config: z<Config> = z.object({
   idleTimeoutMs: z.number().min(1_000).max(2_147_483_647).default(30 * 60 * 1_000),
   maxProcesses: z.number().step(1).min(1).default(4),
   enhancedInterface: z.boolean().default(false),
+  capabilityMaxResultBytes: z.number().step(1).min(1024).default(65536),
+  modelRequestMaxBytes: z.number().step(1).min(1024).default(32 * 1024 * 1024),
+  modelResponseMaxBytes: z.number().step(1).min(1024).default(32 * 1024 * 1024),
+  modelRequestTimeoutMs: z.number().step(1).min(1000).max(2_147_483_647).default(10 * 60 * 1000),
 })
 
 const CLAUDE_SCOPE_UNAVAILABLE_MESSAGE = 'agent command scope unavailable (preset route not mounted?)'
@@ -278,7 +292,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     config: supervisorConfig,
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,
-    resolveConnection: (provider, model) => resolveDshModelConnection(ctx, provider, model),
+    resolveConnection: async (provider, model) => {
+      const resolved = Config(config)
+      return resolveDshModelConnection(ctx, provider, model, await readModelSettings(), {
+        maxRequestBytes: resolved.modelRequestMaxBytes!, maxResponseBytes: resolved.modelResponseMaxBytes!, requestTimeoutMs: resolved.modelRequestTimeoutMs!,
+      })
+    },
+    createCapabilities: current => new DshCapabilities(ctx, current, { maxResultBytes: Config(config).capabilityMaxResultBytes! }),
   })
   let resolutionError: unknown
   try {
@@ -289,9 +309,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         : config.executablePath,
     )
     supervisorConfig.executablePath = resolution.path
-    const adapter = createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath))
+    const adapter = createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath), {
+      list: async () => mappedRoleModels(ctx, await readModelSettings()),
+      resolve: async model => mappedRoleInfo(ctx, await readModelSettings(), model),
+    })
     ctx.llm.registerAdapter([...CLAUDE_CODE_PROVIDER_IDS], adapter)
-    installDshModelRouting(ctx, adapter)
+    installDshModelRouting(ctx, adapter, () => readModelSettings())
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
       const pending = new Set<Agent>()
@@ -445,9 +468,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     })
     registerClaudeGlobalSettingsRoute(webCtx, {
       defaultLimits,
+      modelOptions: () => listDshModelOptions(ctx),
       onUpdated: async () => {
         await applySettingsOverrides()
         supervisor.limitsChanged()
+        ctx.emit('llm/adapters-updated')
       },
     })
     /** Linked pull requests cleaned up, as `clone root + branch`: the log
@@ -530,6 +555,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
     registerPlanFeedbackRoute(webCtx, supervisor.planFeedback, ownsClaudeSession)
+    registerTaskControlRoute(webCtx, (sessionId, taskId) => supervisor.stopTask(sessionId, taskId), ownsClaudeSession)
     registerClaudeRewindRoute(webCtx, sidecar, {
       eventsFor: sessionId => {
         const agent = webCtx.agents.get(sessionId as never)

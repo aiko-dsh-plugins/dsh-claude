@@ -256,7 +256,7 @@ export function latestClaudeContextUsage(
   return undefined
 }
 
-export type ClaudeTaskStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
+export type ClaudeTaskStatus = 'running' | 'paused' | 'completed' | 'failed' | 'stopped' | 'killed'
 
 export interface ClaudeTaskUsage {
   totalTokens?: number
@@ -272,6 +272,10 @@ export interface ClaudeTaskInfo {
   originTurn?: number
   subagentType?: string
   taskType?: string
+  /** Display name supplied by the Claude workflow runtime. */
+  workflowName?: string
+  /** Engine housekeeping is excluded from user task indicators. */
+  ambient?: boolean
   lastToolName?: string
   summary?: string
   usage?: ClaudeTaskUsage
@@ -287,7 +291,7 @@ export interface ClaudeTasksEvent {
 const MAX_TASKS_PER_SNAPSHOT = 50
 const MAX_TASK_TEXT_CHARS = 300
 
-const TASK_STATUSES: ReadonlySet<string> = new Set(['running', 'completed', 'failed', 'stopped', 'killed'])
+const TASK_STATUSES: ReadonlySet<string> = new Set(['running', 'paused', 'completed', 'failed', 'stopped', 'killed'])
 
 function normalizeTaskUsage(input: ClaudeTaskUsage | undefined): ClaudeTaskUsage | undefined {
   if (input === undefined) return undefined
@@ -309,6 +313,8 @@ export function normalizeTasksEvent(tasks: readonly ClaudeTaskInfo[]): ClaudeTas
         ...(task.originTurn === undefined ? {} : { originTurn: nonNegativeInteger(task.originTurn) }),
         ...(task.subagentType === undefined ? {} : { subagentType: redactText(task.subagentType, 64) }),
         ...(task.taskType === undefined ? {} : { taskType: redactText(task.taskType, 64) }),
+        ...(typeof task.workflowName !== 'string' ? {} : { workflowName: redactText(task.workflowName, MAX_TASK_TEXT_CHARS) }),
+        ...(task.ambient === true ? { ambient: true } : {}),
         ...(task.lastToolName === undefined ? {} : { lastToolName: redactText(task.lastToolName, 64) }),
         ...(task.summary === undefined ? {} : { summary: redactText(task.summary, MAX_TASK_TEXT_CHARS) }),
         ...(usage === undefined ? {} : { usage }),

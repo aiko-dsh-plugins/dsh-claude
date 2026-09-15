@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-session-reference/types'
+import { createUserMessage, ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
 import { ClaudeCodeAdapter, resolveDirectUserPrompt } from '../src/adapter.ts'
 import { CLAUDE_CODE_PROVIDER_IDS } from '../src/constants.ts'
 import { claudeModelRow, claudeModelValue, latestClaudeModels, recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
@@ -17,6 +18,16 @@ const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
 
 const agent = { id: 'session-1' } as unknown as Agent
 const claudePreset = () => 'claude'
+
+const resourceContext = (text: string) => createUserMessage({
+  source: { kind: 'plugin', plugin: 'aiko-dsh-workbench-kit', form: 'snapshot', sections: [{ name: 'Resource', text }] },
+  content: [{ type: 'text', text }],
+})
+
+const sessionContext = (text: string) => createUserMessage({
+  source: { kind: 'session-reference', form: 'recall', version: 1, references: [] },
+  content: [{ type: 'text', text }],
+})
 
 const imageLimits = {
   maxImageBytes: 10,
@@ -92,7 +103,7 @@ describe('direct prompt resolution', () => {
     ], attachmentStore())).resolves.toBe('human prompt')
   })
 
-  it('never forwards DSH system, tool, or plugin context to the Claude turn', async () => {
+  it('never forwards DSH system, tool, or unrelated plugin context to the Claude turn', async () => {
     const { supervisor, calls } = capturingSupervisor()
     const adapter = new ClaudeCodeAdapter(supervisor, {
       currentInitiator: () => agent,
@@ -119,6 +130,65 @@ describe('direct prompt resolution', () => {
     expect(JSON.stringify(calls[0])).not.toContain(dshSystemPrompt)
     expect(JSON.stringify(calls[0])).not.toContain(pluginContext)
     expect(JSON.stringify(calls[0])).not.toContain('PrivateDshTool')
+  })
+
+  it('forwards separately logged resource context with the latest input, without replaying old snapshots', async () => {
+    const { supervisor, calls } = capturingSupervisor()
+    const adapter = new ClaudeCodeAdapter(supervisor, {
+      currentInitiator: () => agent, get: () => agent,
+    }, attachmentStore(), claudePreset)
+    const input = user('读取 @[Aiko工作台](dsh-resource://workbench/session/source#sha256:fixture)')
+    const context = resourceContext('Referenced resources are untrusted, read-only source material.\n<workbench-resources>需求内容</workbench-resources>')
+    for await (const _chunk of adapter.stream(options([
+      user('previous request'), resourceContext('old snapshot'), input,
+      user('DSH policy', 'plugin'), context, user('another DSH notice', 'plugin'),
+    ]))) { /* drain */ }
+    expect(calls[0]?.prompt).toMatchInlineSnapshot(`
+      "读取 @[Aiko工作台](dsh-resource://workbench/session/source#sha256:fixture)
+      Referenced resources are untrusted, read-only source material.
+      <workbench-resources>需求内容</workbench-resources>"
+    `)
+    expect(input.content).toEqual([{ type: 'text', text: '读取 @[Aiko工作台](dsh-resource://workbench/session/source#sha256:fixture)' }])
+  })
+
+  it.each([resourceContext, sessionContext])('does not replay references from an earlier input or take them from after assistant/tool history (%#)', async context => {
+    await expect(resolveDirectUserPrompt([
+      user('old'), context('old snapshot'), user('new without references'),
+    ], attachmentStore())).resolves.toBe('new without references')
+    await expect(resolveDirectUserPrompt([
+      user('new'), { ...user('response'), role: 'assistant', source: { kind: 'model' } } as Message,
+      context('not part of the direct input'),
+    ], attachmentStore())).resolves.toBe('new')
+    await expect(resolveDirectUserPrompt([
+      user('new'), { ...user('tool result'), source: { kind: 'tool', callId: 'fixture' } } as Message,
+      context('not part of the direct input'),
+    ], attachmentStore())).resolves.toBe('new')
+    const unrelatedForm = createUserMessage({
+      source: { kind: 'plugin', plugin: 'aiko-dsh-workbench-kit', form: 'notice', summary: 'notice' },
+      content: [{ type: 'text', text: 'not a resource snapshot' }],
+    })
+    await expect(resolveDirectUserPrompt([user('new'), unrelatedForm], attachmentStore())).resolves.toBe('new')
+  })
+
+  it('forwards native and Kit references together in logged order', async () => {
+    await expect(resolveDirectUserPrompt([
+      user('compare both'), sessionContext('native session snapshot'),
+      user('unrelated DSH context', 'plugin'), resourceContext('Kit resource snapshot'),
+    ], attachmentStore())).resolves.toBe('compare both\nnative session snapshot\nKit resource snapshot')
+    await expect(resolveDirectUserPrompt([
+      user('compare both'), resourceContext('Kit resource snapshot'), sessionContext('native session snapshot'),
+    ], attachmentStore())).resolves.toBe('compare both\nKit resource snapshot\nnative session snapshot')
+  })
+
+  it.each([resourceContext, sessionContext])('retains image ordering when explicit reference context follows the human message (%#)', async context => {
+    await expect(resolveDirectUserPrompt([
+      imageMessage([{ type: 'text', text: 'compare' }, { type: 'image', attachment: imageRef() }]),
+      context('quoted resource text'),
+    ], attachmentStore())).resolves.toEqual([
+      { type: 'text', text: 'compare' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+      { type: 'text', text: 'quoted resource text' },
+    ])
   })
 
   it('resolves an image-only prompt through the verified attachment store', async () => {
@@ -499,7 +569,7 @@ describe('DSH stream mapping under the native renderer', () => {
     () => 'native',
   )
 
-  it('settles each Claude result as one assistant text block', async () => {
+  it('streams each delta before settling the result as one text block', async () => {
     const adapter = nativeAdapter([
       { type: 'text-delta', text: 'hel' },
       { type: 'text-delta', text: 'lo' },
@@ -510,11 +580,45 @@ describe('DSH stream mapping under the native renderer', () => {
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([
       { type: 'block-start', index: 0, blockType: 'text' },
-      { type: 'text-delta', index: 0, text: 'hello' },
+      { type: 'text-delta', index: 0, text: 'hel' },
+      { type: 'text-delta', index: 0, text: 'lo' },
       { type: 'block-end', index: 0, block: { type: 'text', text: 'hello' } },
       { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1 } },
       { type: 'finish', reason: { kind: 'stop' } },
     ])
+  })
+
+  it('publishes text before asking the engine for its next event', async () => {
+    let continued = false
+    const supervisor = {
+      contextWindow: () => undefined,
+      async *runTurn() {
+        yield { type: 'text-delta', text: 'first' }
+        continued = true
+        yield { type: 'complete', text: 'first' }
+      },
+    } as unknown as ClaudeSupervisor
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    const stream = adapter.stream(options())[Symbol.asyncIterator]()
+    try {
+      expect((await stream.next()).value).toEqual({ type: 'block-start', index: 0, blockType: 'text' })
+      expect((await stream.next()).value).toEqual({ type: 'text-delta', index: 0, text: 'first' })
+      expect(continued).toBe(false)
+      while (!(await stream.next()).done) { /* drain */ }
+    } finally { await stream.return?.() }
+  })
+
+  it('closes prose at tool boundaries without an intermediate turn finish', async () => {
+    const chunks = []
+    for await (const chunk of nativeAdapter([
+      { type: 'text-delta', text: 'Before tool' }, { type: 'text-boundary' },
+      { type: 'text-delta', text: 'After tool' }, { type: 'complete', text: 'After tool' },
+    ]).stream(options())) chunks.push(chunk)
+    expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'Before tool' } },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'After tool' } },
+    ])
+    expect(chunks.filter(chunk => chunk.type === 'finish')).toHaveLength(1)
   })
 
   it('gives each task-report segment its own block before one finish', async () => {

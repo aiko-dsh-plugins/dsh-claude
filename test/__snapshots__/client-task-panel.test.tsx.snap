@@ -1,0 +1,43 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`native task panel > renders localized workflow state and progress alongside subagents, excluding housekeeping 1`] = `
+{
+  "controls": [
+    "Close tasks panel",
+    "All",
+    "Subagents",
+    "Workflows",
+    "Background",
+    "Stop task",
+    "Stop task",
+    "›Finished1",
+    "Clear",
+  ],
+  "tasks": [
+    "ⅡReview changesWorkflows · PausedStop taskChecking two modules",
+    "●Read sourceSubagents · RunningStop taskExplore",
+    "✓Earlier commandBackground · Completed",
+  ],
+}
+`;
+
+exports[`native task panel > renders localized workflow state and progress alongside subagents, excluding housekeeping 2`] = `
+{
+  "controls": [
+    "关闭任务面板",
+    "全部",
+    "子代理",
+    "工作流",
+    "后台",
+    "停止任务",
+    "停止任务",
+    "›已结束1",
+    "清除",
+  ],
+  "tasks": [
+    "ⅡReview changes工作流 · 已暂停停止任务Checking two modules",
+    "●Read source子代理 · 运行中停止任务Explore",
+    "✓Earlier command后台 · 已完成",
+  ],
+}
+`;

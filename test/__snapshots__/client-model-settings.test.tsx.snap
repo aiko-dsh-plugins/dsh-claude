@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`model configuration card > renders the dsh configuration in both locales 1`] = `
+{
+  "controls": [
+    {
+      "label": "Model source",
+      "value": "Use DSH models",
+    },
+    {
+      "label": "Haiku",
+      "value": "Follow DSH default model",
+    },
+    {
+      "label": "Sonnet",
+      "value": "Follow DSH default model",
+    },
+    {
+      "label": "Opus",
+      "value": "Follow DSH default model",
+    },
+  ],
+  "help": "Choose from Cowork’s configured models. Haiku, Sonnet and Opus can use different providers; a direct DSH selection sets the main model. DSH skills, connectors and shared resources retain their existing configuration. Claude settings-based MCP, hooks and plugins are not loaded in this mode.",
+}
+`;
+
+exports[`model configuration card > renders the dsh configuration in both locales 2`] = `
+{
+  "controls": [
+    {
+      "label": "模型来源",
+      "value": "使用 DSH 模型",
+    },
+    {
+      "label": "Haiku",
+      "value": "跟随 DSH 默认模型",
+    },
+    {
+      "label": "Sonnet",
+      "value": "跟随 DSH 默认模型",
+    },
+    {
+      "label": "Opus",
+      "value": "跟随 DSH 默认模型",
+    },
+  ],
+  "help": "从 Cowork 的已配置模型中选择，Haiku、Sonnet、Opus 可分别映射到不同供应商。对话中直接选择 DSH 模型则用于主对话。DSH 技能、连接器和共享资源沿用现有配置；此模式不加载 Claude 设置中的 MCP、Hooks 和插件。",
+}
+`;
+
+exports[`model configuration card > renders the native configuration in both locales 1`] = `
+{
+  "controls": [
+    {
+      "label": "Model source",
+      "value": "Use native Claude configuration",
+    },
+  ],
+  "help": "Use the local Claude Code models, authentication, user and project settings without DSH endpoints, credentials or role mappings. Select a Claude model in the composer; an existing DSH selection uses the Claude default on the next turn.",
+}
+`;
+
+exports[`model configuration card > renders the native configuration in both locales 2`] = `
+{
+  "controls": [
+    {
+      "label": "模型来源",
+      "value": "使用 Claude 原生配置",
+    },
+  ],
+  "help": "使用本机 Claude Code 的模型、认证及用户、项目配置，不注入 DSH 地址、密钥或角色映射。对话中选择 Claude 型号；已有 DSH 型号会在下一轮改用 Claude 默认型号。",
+}
+`;

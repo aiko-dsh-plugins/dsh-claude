@@ -5,6 +5,10 @@ Date: 2026-08-15
 
 Aiko amendment: [DSH model connections](../../../AIKO.md#dsh-model-connections) supersede the native-Claude-only routing and authentication requirements below when a Session selects a DSH model. Claude Code retains loop/tool ownership; DSH supplies the model connection.
 
+Aiko interface amendment: [Native conversation controls](../../../AIKO.md#native-conversation-controls) supersede the baseline ban on a session-header task control and per-task Stop. The pinned SDK exposes `Query.stopTask`; the Aiko interface retains Claude execution ownership.
+
+Aiko capability amendment: [DSH skills, connectors and Kit resources](../../../AIKO.md#dsh-skills-connectors-and-kit-resources) supersede the baseline exclusion of DSH skills from the preset. The engine calls DSH services through the SDK's in-process MCP seam. Native prose streams before turn settlement. The [generic model transport](../../../AIKO.md#dsh-model-connections) supports configured DSH providers without replacing Claude's internal loop.
+
 ## 1. Product / Requirement Baseline
 
 ### 1.1 Problem
@@ -152,6 +156,8 @@ A crash before the request is accepted may fail normally. A crash after any Clau
 ### 3.3 Prompt mapping
 
 For ordinary conversation calls, extract the newest direct DSH user message that entered the current step. Do not resend the whole DSH history because Claude's session is the context source of truth. Text-only input retains the existing string prompt path. Messages containing images become ordered Anthropic content blocks so pure-image, mixed text/image, and multiple-image input preserve the DSH block order.
+
+The Aiko reference bridge additionally consumes adjacent `session-reference` messages and plugin messages whose producer is `aiko-dsh-workbench-kit` and form is `snapshot`, following that newest human message and before any assistant/tool message. These are the exact, separately logged materials explicitly referenced by the user. Their text, including source warnings and omission notices, follows the human text/images in logged order in the Claude prompt. Native Session references do not require the kit. Other DSH plugin context, tool definitions and system policies are excluded; earlier reference snapshots are not replayed. DSH displays referenced context in its native collapsed row.
 
 DSH image blocks contain immutable attachment references, not paths or URLs. Resolve them only through the injected public `ctx.attachments.readImage(ref, signal)` service, which verifies stored bytes against the durable reference. Apply the deployment's authoritative `imageLimits` before and after reads: supported raster media types, per-image bytes, images per message, aggregate bytes, pixels, and dimensions where exposed by the compatible Host. Cancellation must settle promptly during resolution. Missing, unreadable, corrupt, unsupported, or over-limit images fail with bounded actionable errors that contain no attachment identity, path, raw bytes, base64, or underlying sensitive diagnostics.
 

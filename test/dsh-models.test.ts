@@ -16,6 +16,25 @@ function host(settings: unknown = {}, key = 'fixture-dsh-key') {
 }
 
 describe('DSH model connection', () => {
+  it('routes role-based titles to the DSH Haiku mapping without a native Claude call', async () => {
+    type Listener = (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>
+    let listener!: Listener
+    const stream = vi.fn(async function* (_options: GenerateOptions) { yield { type: 'text-delta', index: 0, text: 'DSH title' } as StreamChunk })
+    const next = vi.fn(async function* () { yield { type: 'text-delta', index: 0, text: 'Native title' } as StreamChunk })
+    const ctx = { on: (_name: string, handler: Listener) => { listener = handler }, llm: { stream } } as unknown as Context
+    let native = false
+    installDshModelRouting(ctx, { stream }, async () => ({ source: native ? 'native' : 'dsh', roles: { haiku: { provider: 'deepseek-official', model: 'haiku-mapped-id' } } }))
+    const options: GenerateOptions = { provider: 'claude', model: 'opus', purpose: 'session-title', messages: [] }
+    const first = []
+    for await (const chunk of listener(options, next)) first.push(chunk)
+    expect(stream).toHaveBeenCalledWith({ ...options, provider: 'deepseek-official', model: 'haiku-mapped-id' })
+    expect(next).not.toHaveBeenCalled()
+    expect(first).toEqual([{ type: 'text-delta', index: 0, text: 'DSH title' }])
+    native = true
+    for await (const _ of listener(options, next)) { /* consume native title */ }
+    expect(next).toHaveBeenCalledOnce()
+  })
+
   it('intercepts an Agent request outside the plugin listener scope on a real Cordis runtime', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
@@ -79,6 +98,32 @@ describe('DSH model connection', () => {
     expect(h.resolve).not.toHaveBeenCalled()
   })
 
+  it.each(['deepseek-v4-flash', 'deepseek-flash'])('keeps session selection %s usable after the catalog id changes', async model => {
+    const h = host({ models: [{ id: 'deepseek-flash', name: 'DeepSeek-V4-Flash-Vision-Exp' }] })
+    const connection = await resolveDshModelConnection(h.ctx, 'deepseek-official', model)
+    expect(connection?.model).toBe(model)
+    expect(connection?.env.ANTHROPIC_MODEL).toBe(model)
+    expect(connection?.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(model)
+    expect(h.resolve).toHaveBeenCalledOnce()
+  })
+
+  it.each(['https://api.deepseek.com', 'https://gateway.example/team/v1'])('passes custom catalog ids unchanged to %s', async baseURL => {
+    const h = host({ baseURL, models: [{ id: 'team-code-model', name: 'Team Code' }] })
+    const connection = await resolveDshModelConnection(h.ctx, 'deepseek-official', 'team-code-model')
+    expect(connection?.env.ANTHROPIC_BASE_URL).toBe(deepSeekAnthropicURL(baseURL))
+    expect(connection?.env.ANTHROPIC_MODEL).toBe('team-code-model')
+  })
+
+  it('keeps the connection stable across display-name changes and catalog removal', async () => {
+    const settings = { models: [{ id: 'deepseek-flash', name: 'Original label' }] }
+    const h = host(settings)
+    const original = await resolveDshModelConnection(h.ctx, 'deepseek-official', 'deepseek-flash')
+    settings.models[0]!.name = 'Renamed label'
+    expect(await resolveDshModelConnection(h.ctx, 'deepseek-official', 'deepseek-flash')).toEqual(original)
+    settings.models = []
+    expect(await resolveDshModelConnection(h.ctx, 'deepseek-official', 'deepseek-flash')).toEqual(original)
+  })
+
   it.each([
     ['https://api.deepseek.com/v1/', 'https://api.deepseek.com/anthropic'],
     ['https://gateway.example/team/v1', 'https://gateway.example/team/anthropic'],
@@ -91,12 +136,10 @@ describe('DSH model connection', () => {
     expect(() => deepSeekAnthropicURL(url)).toThrow('HTTP endpoint')
   })
 
-  it('fails before resolving credentials for unsupported providers and unknown models', async () => {
+  it('fails before resolving credentials for unsupported providers', async () => {
     const h = host()
-    await expect(resolveDshModelConnection(h.ctx, 'other', 'test')).rejects.toThrow('supported Claude Code connection')
-    await expect(resolveDshModelConnection(h.ctx, 'deepseek-official', 'made-up')).rejects.toThrow('not in the DSH')
+    await expect(resolveDshModelConnection(h.ctx, 'other', 'test')).rejects.toThrow('requires the DSH model transport')
     expect(h.resolve).not.toHaveBeenCalled()
-    await expect(resolveDshModelConnection(host({ models: [{ id: 'made-up' }] }).ctx, 'deepseek-official', 'made-up')).rejects.toThrow('no verified')
   })
 
   it('fails without a usable DSH credential instead of falling back to Claude auth', async () => {

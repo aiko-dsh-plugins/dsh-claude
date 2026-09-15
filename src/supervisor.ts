@@ -38,6 +38,8 @@ import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
 import type { ClaudeModelConnection } from './dsh-models.ts'
+import { DSH_CAPABILITY_TOOL_NAMES, type DshCapabilities, type DshCapabilityInvocation } from './dsh-capabilities.ts'
+import type { ModelTransportHandle } from './model-transport.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -64,6 +66,7 @@ export interface ClaudeSupervisorConfig {
 }
 
 export type ClaudeTurnStreamEvent =
+  | { readonly type: 'text-boundary' }
   | { type: 'text-delta'; text: string }
   /** One settled Claude thinking block, forwarded only for the native
    *  renderer, which draws it as a DSH reasoning block. */
@@ -205,6 +208,8 @@ interface ActiveTurn {
 }
 
 interface SupervisorEntry {
+  capabilities: DshCapabilities | undefined
+  modelTransport: ModelTransportHandle | undefined
   sessionId: string
   ownerAgent: Agent
   cwd: string
@@ -365,6 +370,7 @@ export class ClaudeSupervisor {
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
   readonly #resolveConnection: (provider: string, model: string) => Promise<ClaudeModelConnection | undefined>
+  readonly #createCapabilities: ((current: () => DshCapabilityInvocation | undefined) => DshCapabilities) | undefined
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -388,11 +394,13 @@ export class ClaudeSupervisor {
     runDetached?: <T>(operation: () => T) => T
     sidecar?: ClaudeSidecarRepository
     resolveConnection?: (provider: string, model: string) => Promise<ClaudeModelConnection | undefined>
+    createCapabilities?: (current: () => DshCapabilityInvocation | undefined) => DshCapabilities
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
     this.#userQuestions = dependencies.userQuestions
     this.#config = dependencies.config
+    this.#createCapabilities = dependencies.createCapabilities
     this.#queryFactory = dependencies.queryFactory ?? (params => claudeQuery(params))
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
     this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
@@ -413,6 +421,18 @@ export class ClaudeSupervisor {
       ...(entry.thinkingMode === undefined ? {} : { thinkingMode: entry.thinkingMode }),
       lastUsedAt: entry.lastUsedAt,
     }))
+  }
+
+  /** Stop only an observed task on its existing Claude process. Never starts a query or changes models. */
+  async stopTask(sessionId: string, taskId: string): Promise<boolean> {
+    const entry = this.#entries.get(sessionId)
+    const task = entry?.tasks.get(taskId)
+    if (entry === undefined || task === undefined || task.ambient === true
+      || (task.status !== 'running' && task.status !== 'paused')
+      || entry.state === 'interrupting' || entry.state === 'disconnected' || entry.state === 'disposed') return false
+    await withTimeout(entry.query.stopTask(taskId), 4_000, 'Claude task stop')
+    // The engine's task_notification remains the authority for task settlement.
+    return true
   }
 
   supportedCommands(agent: Agent, model = this.#config.defaultModel): Promise<readonly SlashCommand[]> {
@@ -1030,13 +1050,15 @@ export class ClaudeSupervisor {
       lastUsedAt: Date.now(),
       input,
       lifetime,
+      capabilities: undefined,
+      modelTransport: undefined,
       claudeSessionId: startFresh ? undefined : binding?.claudeSessionId,
       expectedResume: startFresh || forkAt !== undefined ? undefined : binding?.claudeSessionId,
       lastChainUuid: undefined,
       consumedRewind: pendingRewind !== undefined,
       initialized: false,
       idleTimer: undefined,
-      tasks: new Map<string, ClaudeTaskInfo>(),
+      tasks: new Map((projection.tasks?.tasks ?? []).map(task => [task.taskId, task])),
       taskSnapshotAt: 0,
       taskSnapshotTimer: undefined,
     } as SupervisorEntry
@@ -1056,8 +1078,18 @@ export class ClaudeSupervisor {
       }
     }
     const userQuestion = createUserQuestionBridge(this.#userQuestions, activeInteraction)
-    const canUseTool = createPermissionBridge(this.#approval, activeInteraction, userQuestion, this.planFeedback)
+    const canUseTool = createPermissionBridge(this.#approval, activeInteraction, userQuestion, this.planFeedback,
+      toolName => entry.capabilities !== undefined && DSH_CAPABILITY_TOOL_NAMES.has(toolName))
+    const currentInvocation = () => {
+      const active = entry.active
+      if (!active || entry.lifetime.signal.aborted) return undefined
+      return { agent: active.agent, cursor: active.cursor, signal: active.signal === undefined
+        ? entry.lifetime.signal : AbortSignal.any([active.signal, entry.lifetime.signal]) }
+    }
+    entry.capabilities = this.#createCapabilities?.(currentInvocation)
+    entry.modelTransport = await connection?.openTransport?.(currentInvocation)
     const options: ClaudeOptions = {
+      ...(entry.capabilities === undefined ? {} : { mcpServers: { dsh: entry.capabilities.server() } }),
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,
       // DSH connections must not inherit endpoint/auth overrides from Claude settings.
@@ -1071,7 +1103,7 @@ export class ClaudeSupervisor {
       abortController: lifetime,
       spawnClaudeCodeProcess: createManagedClaudeSpawner(this.#runtime, this.#config.executablePath, process => {
         entry.process = process
-      }, connection?.env),
+      }, connection === undefined ? undefined : { ...connection.env, ...entry.modelTransport?.env }),
       ...(binding === undefined || startFresh ? {} : {
         resume: binding.claudeSessionId,
         ...(forkAt === undefined ? {} : { resumeSessionAt: forkAt }),
@@ -1087,7 +1119,14 @@ export class ClaudeSupervisor {
             ? { settings: { ultracode: true } satisfies ClaudeSettings }
             : { effort: thinkingMode }),
     }
-    entry.query = this.#queryFactory({ prompt: input, options })
+    try {
+      entry.query = this.#queryFactory({ prompt: input, options })
+    } catch (error) {
+      lifetime.abort()
+      await entry.capabilities?.dispose()
+      await entry.modelTransport?.dispose()
+      throw error
+    }
     entry.pump = this.#runDetached(() => this.#pump(entry))
     entry.sdkInitialization = withTimeout(
       entry.query.initializationResult(),
@@ -1097,7 +1136,7 @@ export class ClaudeSupervisor {
       // The CLI's own /model lineup rides along on initialize, so the selector
       // tracks whatever Claude Code ships without a table in this plugin and
       // without a control request of its own.
-      recordClaudeModels(initialization.models)
+      if (entry.connection === undefined) recordClaudeModels(initialization.models)
       if (entry.state === 'starting') entry.state = 'idle'
     })
     void entry.sdkInitialization.catch(error => this.#handleDisconnect(entry, error))
@@ -1135,11 +1174,12 @@ export class ClaudeSupervisor {
       entry.initialized = true
       entry.claudeSessionId = message.sessionId
       entry.state = entry.active === undefined ? 'idle' : 'running'
-      // A newly created Query cannot retain tasks from the previous process,
-      // but repeated init messages from this same long-lived Query are only
-      // protocol refreshes and must not erase background work still running.
+      // Finished task history survives process recreation. Running tasks belong
+      // to the old process; repeated init from the same query keeps them intact.
       if (firstInitialization && entry.tasks.size > 0) {
-        entry.tasks.clear()
+        for (const [id, task] of entry.tasks) {
+          if (task.status === 'running' || task.status === 'paused') entry.tasks.delete(id)
+        }
         await this.#flushTasksSnapshot(entry)
       }
       await this.#sidecar.writeBinding(entry.sessionId, {
@@ -1241,7 +1281,10 @@ export class ClaudeSupervisor {
         if (active.native) active.output.push({ type: 'thinking', text: message.text })
         return
       case 'tool-call':
-        if (message.parentToolUseId === undefined) this.#closeTranscriptTextSegment(active)
+        if (message.parentToolUseId === undefined) {
+          this.#closeTranscriptTextSegment(active)
+          if (active.native) active.output.push({ type: 'text-boundary' })
+        }
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-call' : 'subagent',
           phase: 'started',
@@ -1365,6 +1408,7 @@ export class ClaudeSupervisor {
    *  unwinds with the agent; failure keeps the generic card, never the turn. */
   #ensureDynamicPresenter(agent: Agent, name: string): void {
     if (CLAUDE_PRESENTER_NAMES.has(name)) return
+    if (agent.ctx.tools.get(name, agent) !== undefined) return
     let known = this.#dynamicPresenterNames.get(agent)
     if (known === undefined) {
       known = new Set<string>()
@@ -1439,15 +1483,18 @@ export class ClaudeSupervisor {
     if (subagentType !== undefined) next.subagentType = subagentType
     const taskType = message.taskType ?? previous?.taskType
     if (taskType !== undefined) next.taskType = taskType
+    const workflowName = message.workflowName ?? previous?.workflowName
+    if (workflowName !== undefined) next.workflowName = workflowName
+    if (message.ambient === true || previous?.ambient === true) next.ambient = true
     const lastToolName = message.lastToolName ?? previous?.lastToolName
     if (lastToolName !== undefined) next.lastToolName = lastToolName
     const summary = message.summary ?? previous?.summary
     if (summary !== undefined) next.summary = summary
     const usage = message.usage ?? previous?.usage
     if (usage !== undefined) next.usage = usage
-    if (previous?.backgrounded === true) next.backgrounded = true
+    if ((message.backgrounded ?? previous?.backgrounded) === true) next.backgrounded = true
     entry.tasks.set(taskId, next)
-    const settled = next.status !== 'running'
+    const settled = next.status !== 'running' && next.status !== 'paused'
     await this.#scheduleTasksSnapshot(entry, settled)
     if (settled) await this.#continueAfterTasks(entry)
   }
@@ -1473,13 +1520,13 @@ export class ClaudeSupervisor {
           backgrounded: true,
         })
         changed = true
-      } else if (existing.backgrounded !== true || existing.status !== 'running') {
-        entry.tasks.set(task.taskId, { ...existing, status: 'running', backgrounded: true })
+      } else if (existing.backgrounded !== true || (existing.status !== 'running' && existing.status !== 'paused')) {
+        entry.tasks.set(task.taskId, { ...existing, status: existing.status === 'paused' ? 'paused' : 'running', backgrounded: true })
         changed = true
       }
     }
     for (const task of entry.tasks.values()) {
-      if (task.backgrounded === true && task.status === 'running' && !live.has(task.taskId)) {
+      if (task.backgrounded === true && (task.status === 'running' || task.status === 'paused') && !live.has(task.taskId)) {
         entry.tasks.set(task.taskId, { ...task, status: 'completed' })
         changed = true
       }
@@ -1492,7 +1539,7 @@ export class ClaudeSupervisor {
 
   #hasRunningTasks(entry: SupervisorEntry, active: ActiveTurn): boolean {
     return [...entry.tasks.values()].some(task => (
-      task.originTurn === active.cursor.turn && task.backgrounded === true && task.status === 'running'
+      task.originTurn === active.cursor.turn && task.ambient !== true && task.backgrounded === true && (task.status === 'running' || task.status === 'paused')
     ))
   }
 
@@ -1922,6 +1969,8 @@ export class ClaudeSupervisor {
     entry.input.discard(abortFailure())
     entry.query.close()
     entry.lifetime.abort()
+    await entry.modelTransport?.dispose()
+    await entry.capabilities?.dispose()
     if (entry.active !== undefined) entry.active.output.fail(abortFailure())
     entry.process?.kill('SIGTERM')
     if (entry.process !== undefined) {

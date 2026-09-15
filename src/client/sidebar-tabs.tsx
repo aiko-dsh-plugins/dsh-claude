@@ -149,7 +149,7 @@ export function ClaudePlanTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<Cl
 
 export function ClaudeTasksTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<Omit<ClaudeTasksPanelProps, 'turn'>>) {
   const { closeDetails, params } = useClaudeTab(useTabInfo, noteTab)
-  return <ClaudeTasksPanel {...panel} closeDetails={closeDetails} turn={params.turn ?? 0} />
+  return <ClaudeTasksPanel {...panel} closeDetails={closeDetails} {...(params.turn === undefined ? {} : { turn: params.turn })} />
 }
 
 export function ClaudeOverviewTab({ useTabInfo, noteTab, face }: ClaudeTabFace & {
@@ -204,7 +204,7 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
     key: CLAUDE_TAB_KINDS.tasks,
     locale: namespace,
     inject: (sessionId: string): Omit<ClaudeTasksPanelInjected, 'closeDetails' | 'turn'> & ClaudeTabFace => (
-      { t, ...faceFor(CLAUDE_TAB_KINDS.tasks, sessionId) }
+      { t, sessionId, ...faceFor(CLAUDE_TAB_KINDS.tasks, sessionId) }
     ),
   }, ClaudeTasksTab))
   ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({

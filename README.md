@@ -8,6 +8,12 @@ This is the Aiko fork of [Norman-else/dsh-claude](https://github.com/Norman-else
 
 Claude Code remains responsible for its agent loop and tools. Native Claude selections use its own settings and authentication; Aiko DSH model selections use [DSH model connections](AIKO.md#dsh-model-connections) with isolated Claude settings. DSH provides the conversation UI, approval and question surfaces, repository workflow, activity presentation, and managed process lifetime.
 
+The Aiko native interface adds [task and workflow controls, plan review, Diff and rewind](AIKO.md#native-conversation-controls) inside the existing DSH layout.
+
+Code accepts both native `@` Session references and Workbench Kit shared resources. Their separately logged, read-only context accompanies the current input to Claude while the message retains DSH's native reference display; the next turn does not resend old snapshots.
+
+The Aiko fork also reuses [DSH skills, connectors and Kit resource tools](AIKO.md#dsh-skills-connectors-and-kit-resources) through the official SDK MCP interface. Native replies stream incrementally. Haiku, Sonnet and Opus can map to different configured DSH providers, subject to the [Messages transport limits](AIKO.md#dsh-model-connections).
+
 ## 2. Installation and removal
 
 ### Requirements

@@ -19,6 +19,7 @@ import {
   type ClaudeRenderMode,
 } from './constants.ts'
 import { registerPluginRoute, type PluginRouteIo } from './http.ts'
+import { CLAUDE_MODEL_ROLES, modelSettingsFrom, parseModelReference, type ClaudeModelSettings } from './model-settings.ts'
 
 const MAX_SETTINGS_BYTES = 256 * 1024
 const MAX_REQUEST_BYTES = 8 * 1024
@@ -75,6 +76,8 @@ export interface GlobalSettingsDependencies {
   paths?: Partial<GlobalSettingsPaths>
   /** Limits from the plugin config, shown when Settings holds no override. */
   defaultLimits?: SupervisorLimits
+  /** Reads the same live DSH model registry used by Cowork; returns no credentials. */
+  modelOptions?: () => Promise<readonly GlobalSettingOption[]>
   /** Invoked after a successful update so live runtime state can follow. */
   onUpdated?: () => void | Promise<void>
 }
@@ -84,7 +87,7 @@ interface SelectSettingDescriptor {
   kind: 'select'
   document: 'claude' | 'plugin'
   effect: GlobalSettingEffect
-  options(paths: GlobalSettingsPaths): Promise<readonly GlobalSettingOption[]>
+  options(paths: GlobalSettingsPaths, deps: GlobalSettingsDependencies): Promise<readonly GlobalSettingOption[]>
   read(document: JsonObject, options: readonly GlobalSettingOption[]): string
   apply(document: JsonObject, value: unknown, options: readonly GlobalSettingOption[]): void
 }
@@ -328,7 +331,39 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses, 'immediate')
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const MODEL_SOURCE: SelectSettingDescriptor = {
+  key: 'modelSource', kind: 'select', document: 'plugin', effect: 'next-turn',
+  async options() {
+    return ['dsh', 'native'].map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) { return modelSettingsFrom(document).source },
+  apply(document, value) {
+    if (value !== 'dsh' && value !== 'native') throw new Error('Invalid value for global setting modelSource')
+    document.modelSource = value
+  },
+}
+
+const MODEL_ROLES: readonly SelectSettingDescriptor[] = CLAUDE_MODEL_ROLES.map(role => {
+  const key = `model${role[0]!.toUpperCase()}${role.slice(1)}`
+  return {
+    key, kind: 'select', document: 'plugin', effect: 'next-turn',
+    async options(_paths, deps) {
+      return [{ value: 'default', label: 'default', source: 'built-in' }, ...await deps.modelOptions?.() ?? []]
+    },
+    read(document) {
+      const ref = modelSettingsFrom(document).roles[role]
+      return ref === undefined ? 'default' : JSON.stringify(ref)
+    },
+    apply(document, value, options) {
+      if (value === 'default') { delete document[key]; return }
+      const ref = parseModelReference(value)
+      if (!options.some(option => option.value === JSON.stringify(ref))) throw new Error('Select a model from the current DSH model list')
+      document[key] = JSON.stringify(ref)
+    },
+  }
+})
+
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES, MODEL_SOURCE, ...MODEL_ROLES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
@@ -336,7 +371,8 @@ function documentFor(descriptor: SettingDescriptor, documents: { claude: JsonObj
   return documents[descriptor.document]
 }
 
-async function views(documents: { claude: JsonObject; plugin: JsonObject }, paths: GlobalSettingsPaths, defaults: SupervisorLimits): Promise<GlobalSettingsView> {
+async function views(documents: { claude: JsonObject; plugin: JsonObject }, paths: GlobalSettingsPaths, deps: GlobalSettingsDependencies): Promise<GlobalSettingsView> {
+  const defaults = deps.defaultLimits ?? DEFAULT_LIMITS
   return {
     settings: await Promise.all(DESCRIPTORS.map(async descriptor => {
       const document = documentFor(descriptor, documents)
@@ -349,7 +385,7 @@ async function views(documents: { claude: JsonObject; plugin: JsonObject }, path
           effect: descriptor.effect,
         }
       }
-      const discovered = await descriptor.options(paths)
+      const discovered = await descriptor.options(paths, deps)
       const value = descriptor.read(document, discovered)
       const options = discovered.some(option => option.value === value)
         ? discovered
@@ -372,7 +408,15 @@ async function readDocuments(paths: GlobalSettingsPaths): Promise<{ claude: Json
 
 export async function readGlobalSettings(deps: GlobalSettingsDependencies = {}): Promise<GlobalSettingsView> {
   const paths = pathsFor(deps)
-  return views(await readDocuments(paths), paths, deps.defaultLimits ?? DEFAULT_LIMITS)
+  return views(await readDocuments(paths), paths, deps)
+}
+
+/** Read model routing on each turn; invalid files fail instead of changing auth source.
+ * @param deps - Optional plugin settings path for an isolated host.
+ * @returns Validated model source and references.
+ */
+export async function readModelSettings(deps: GlobalSettingsDependencies = {}): Promise<ClaudeModelSettings> {
+  return modelSettingsFrom(await readDocument(pathsFor(deps).pluginSettingsFile))
 }
 
 /** Supervisor limits the user overrode in Settings; absent keys fall back to the plugin config. */
@@ -436,13 +480,14 @@ export function updateGlobalSettings(changes: unknown, deps: GlobalSettingsDepen
     for (const [key, value] of Object.entries(changeObject)) {
       const descriptor = DESCRIPTOR_BY_KEY.get(key)!
       const document = documentFor(descriptor, documents)
-      if (descriptor.kind === 'select') descriptor.apply(document, value, await descriptor.options(paths))
+      if (descriptor.kind === 'select') descriptor.apply(document, value, await descriptor.options(paths, deps))
       else descriptor.apply(document, value)
       changedDocuments.add(descriptor.document)
     }
+    const result = await views(documents, paths, deps)
     if (changedDocuments.has('claude')) await atomicWrite(paths.settingsFile, documents.claude)
     if (changedDocuments.has('plugin')) await atomicWrite(paths.pluginSettingsFile, documents.plugin)
-    return views(documents, paths, deps.defaultLimits ?? DEFAULT_LIMITS)
+    return result
   })
   pendingWrite = operation
   return operation

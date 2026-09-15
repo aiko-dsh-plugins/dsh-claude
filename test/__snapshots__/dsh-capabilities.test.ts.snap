@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`loads only model-invocable skills from the active DSH registry and logs their complete instructions 1`] = `
+[
+  {
+    "content": [
+      {
+        "text": "[{"name":"review","description":"review"}]",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+  },
+  {
+    "content": [
+      {
+        "text": "<skill_content name="review">
+<skill_resources>
+Resources for this skill are managed by provider "fixture".
+Load referenced resources only as needed.
+</skill_resources>
+
+<skill_instructions>
+Inspect changes and report findings.
+</skill_instructions>
+</skill_content>",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+  },
+  {
+    "content": [
+      {
+        "text": "DSH capability call failed or exceeded its limits. Check the configured source and narrow the request.",
+        "type": "text",
+      },
+    ],
+    "isError": true,
+  },
+]
+`;

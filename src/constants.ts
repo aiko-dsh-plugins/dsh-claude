@@ -76,3 +76,6 @@ export const DEFAULT_CLAUDE_ALERT_MODE: ClaudeAlertMode = 'on'
 export function isClaudeAlertMode(value: unknown): value is ClaudeAlertMode {
   return value === 'off' || value === 'on'
 }
+
+/** Native Claude per-task control, scoped to an existing DSH session. */
+export const CLAUDE_TASK_STOP_PATH = '/plugins/dsh-claude/tasks/stop'

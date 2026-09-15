@@ -790,9 +790,19 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
   }, [goToComment, targets.length])
   useEffect(() => () => actionController.current?.abort(), [])
   useEffect(() => {
-    if (!projection.owned || repository?.status !== 'ready' || diff === undefined) closeDetails()
-  }, [closeDetails, diff, projection.owned, repository?.status])
-  if (!projection.owned || repository?.status !== 'ready' || diff === undefined) return null
+    if (!projection.owned) closeDetails()
+  }, [closeDetails, projection.owned])
+  if (!projection.owned) return null
+  if (repository?.status !== 'ready' || diff === undefined) return (
+    <section className={styles.detailsCardClass} style={styles.tasksPanel}>
+      <style>{styles.detailsCardCss}{styles.panelIconButtonCss}</style>
+      <header style={styles.tasksHeader}>
+        <span>{t('diffTabTitle')}</span>
+        <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
+      </header>
+      <p role="status" style={{ padding: 16, color: 'var(--dsw-alias-label-secondary)' }}>{t(repository?.status === 'not-repository' ? 'diffNotRepository' : repository === undefined ? 'diffLoading' : 'diffUnavailable')}</p>
+    </section>
+  )
   const branch = branchLabel(repository, t)
   const availability = repositoryActionAvailability(repository)
   const anyActionAvailable = availability['commit'] || availability['commit-push'] || availability['push'] || availability['create-pr']

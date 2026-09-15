@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { CLAUDE_CODE_PROVIDER } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE } from './command-bridge.ts'
 import { claudePresenterDefinitions } from './presenters.ts'
+import { readModelSettings } from './global-settings.ts'
 
 export const name = 'claude-code-preset-route'
 export const inject = ['tools', 'commands']
@@ -16,9 +17,11 @@ export interface Config {
 export function apply(ctx: Context, config: Config = {}): void {
   ctx.on('agent/request', async (_payload, next) => {
     const upstream = await next()
-    if (config.model === undefined && upstream.provider === 'deepseek-official') return upstream
+    if ((await readModelSettings()).source === 'native' && upstream.provider !== CLAUDE_CODE_PROVIDER) {
+      return { ...upstream, provider: CLAUDE_CODE_PROVIDER, model: config.model ?? 'default' }
+    }
     if (config.model === undefined && upstream.provider !== CLAUDE_CODE_PROVIDER && upstream.model !== undefined) {
-      throw new Error(`dsh-claude: provider ${upstream.provider} has no Claude Code model connection; select DeepSeek or Claude Code`)
+      return upstream
     }
     return {
       ...upstream,

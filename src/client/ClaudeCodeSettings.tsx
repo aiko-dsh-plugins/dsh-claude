@@ -108,6 +108,7 @@ function SelectChevron() {
 }
 
 interface GlobalSettingSelectProps {
+  label?: string
   setting: Extract<GlobalSettingView, { kind: 'select' }>
   disabled: boolean
   onChange: (value: string) => void
@@ -149,7 +150,7 @@ export function GlobalSettingText({ setting, disabled, onChange }: {
   )
 }
 
-export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = option => option.label }: GlobalSettingSelectProps) {
+export function GlobalSettingSelect({ setting, disabled, onChange, label, labelFor = option => option.label }: GlobalSettingSelectProps) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -198,6 +199,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = op
       <button
         ref={triggerRef}
         type="button"
+        aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -286,6 +288,42 @@ export function visibleGlobalSettings(settings: readonly GlobalSettingView[]): r
   const renderer = settings.find(setting => setting.key === 'renderer')
   if (renderer === undefined || renderer.value !== 'native') return settings
   return settings.filter(setting => setting.key !== 'prose')
+}
+
+const MODEL_SETTING_KEYS = ['modelSource', 'modelHaiku', 'modelSonnet', 'modelOpus'] as const
+
+/** Model-source controls reuse the host's settings writer and model references. */
+export function ClaudeModelSettingsCard({ settings, busy, t, onChange, onRefresh }: {
+  settings: readonly GlobalSettingView[] | undefined
+  busy: boolean
+  t: ClaudeCodeSettingsInjected['t']
+  onChange: (key: string, value: string) => void
+  onRefresh: () => void
+}) {
+  const native = settings?.find(setting => setting.key === 'modelSource')?.value === 'native'
+  return <section style={styles.settingsCard}>
+    <div style={styles.settingsCardHeader}>
+      <div>
+        <h3 style={styles.settingsSectionHeading}>{t('modelConfiguration')}</h3>
+        <p style={styles.settingsBody}>{t('modelConfigurationBody')}</p>
+      </div>
+      <button type="button" style={styles.button} disabled={busy} onClick={onRefresh}>{t('modelRefresh')}</button>
+    </div>
+    {settings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : MODEL_SETTING_KEYS.map(key => {
+      if (native && key !== 'modelSource') return null
+      const setting = settings.find(item => item.key === key)
+      if (setting?.kind !== 'select') return null
+      return <div key={key} style={styles.diagnosticGrid}>
+        <span style={styles.diagnosticLabel}>{t(key)}</span>
+        <GlobalSettingSelect setting={setting} label={t(key)} disabled={busy}
+          labelFor={option => key === 'modelSource'
+            ? t(option.value === 'native' ? 'modelSourceNative' : 'modelSourceDsh')
+            : option.value === 'default' ? t('modelFollowDefault') : option.label}
+          onChange={value => onChange(key, value)} />
+      </div>
+    })}
+    <p style={styles.settingsBody}>{t(native ? 'modelNativeHelp' : 'modelDshHelp')}</p>
+  </section>
 }
 
 /** Per-setting label and the effect note that used to sit as a standalone
@@ -604,6 +642,11 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         </div>
       </header>
 
+      <ClaudeModelSettingsCard settings={globalSettings?.settings} busy={globalSettingsBusy} t={t}
+        onChange={(key, value) => { void requestGlobalSettings({ [key]: value }) }}
+        onRefresh={() => { void requestGlobalSettings() }} />
+      {globalSettingsError === undefined ? null : <FailureNotice label={t('globalSettingsError')} failure={globalSettingsError} />}
+
       <section style={styles.settingsCard}>
         <div style={styles.settingsCardHeader}>
           <div>
@@ -625,14 +668,14 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         {error === undefined ? null : <FailureNotice label={t('error')} failure={error} />}
       </section>
 
-      <PlanUsageCard t={t} load={loadPlanUsage} />
+      {globalSettings?.settings.find(setting => setting.key === 'modelSource')?.value === 'native' ? <PlanUsageCard t={t} load={loadPlanUsage} /> : null}
 
       <section style={styles.settingsCard}>
         <div>
           <h3 style={styles.settingsSectionHeading}>{t('globalSettings')}</h3>
           <p style={styles.settingsBody}>{t('globalSettingsBody')}</p>
         </div>
-        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : visibleGlobalSettings(globalSettings.settings).map(setting => {
+        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : visibleGlobalSettings(globalSettings.settings).filter(setting => !MODEL_SETTING_KEYS.some(key => key === setting.key)).map(setting => {
           const copy = SETTING_COPY[setting.key]
           return (
           <div key={setting.key} style={styles.diagnosticGrid}>

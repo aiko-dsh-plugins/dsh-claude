@@ -120,6 +120,7 @@ export function createPermissionBridge(
   activeContext: ActivePermissionContextProvider,
   userQuestion?: UserQuestionBridge,
   planFeedback?: PlanFeedbackGate,
+  delegatesToDsh?: (toolName: string) => boolean,
 ): CanUseTool {
   return async (toolName, input, options) => {
     if (toolName === 'AskUserQuestion') {
@@ -143,6 +144,11 @@ export function createPermissionBridge(
     }
 
     active.markActivity?.()
+    // Only the managed in-process bridge delegates. Its executor applies DSH policy
+    // to the actual connector/resource call and records the resulting decision.
+    if (delegatesToDsh?.(toolName) === true && !options.signal.aborted) {
+      return { behavior: 'allow', updatedInput: input, toolUseID: options.toolUseID }
+    }
     const reason = permissionReason(toolName, input, options)
     const plan = planText(toolName, input)
     const session = active.agent.session

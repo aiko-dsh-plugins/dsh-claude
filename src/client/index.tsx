@@ -1,3 +1,4 @@
+import { ClaudeTasksHeaderAction } from './ClaudeTasksHeaderAction.tsx'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -289,6 +290,135 @@ ${error.stack ?? ''}`
       openTasks: turn => openTasksPanel(sessionId, turn),
     }),
   }, ClaudeActivityTail))
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-plan',
+    order: 29,
+    locale: namespace,
+    inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
+      t,
+      togglePlan: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.plan, sessionId, {}) },
+      planOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.plan, sessionId),
+    }),
+  }, ClaudePlanHeaderAction))
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-diff',
+    order: 30,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
+      t,
+      toggleDiff: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.diff, sessionId, {}) },
+      diffOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.diff, sessionId),
+    }),
+  }, ClaudeDiffHeaderAction))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock',
+    id: 'claude-review-comments',
+    // Topmost dock row: pending comments render above DSH's QueueDock (20)
+    // and the repository status readout (20.5).
+    order: 18,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeReviewCommentsInjected => ({
+      t,
+      sessionId,
+      ...(sessions === undefined || conversation === undefined ? {} : {
+        submitWith: (fallbackDraft: string) => {
+          const scope = sessions.scope(sessionId as SessionId)
+          if (scope === undefined) return
+          const input = sessionInput(conversation, scope)
+          if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
+          input.submit()
+        },
+      }),
+    }),
+  }, ClaudeReviewComments))
+  /** Compose the chat view the rewind control reads.
+   *
+   *  Desktop 2.0 split what used to be one Session snapshot: the Controller's
+   *  `binding.session` kept `running`, while the assembled Chat nodes moved to
+   *  the Conversation binding's 'chat' target. Reading the old combined shape
+   *  threw on `snapshot.chat.order` and took the whole overlay entry down. */
+  const chatSourceCache = new Map<string, ClaudeChatSource>()
+  const claudeChatSource = (sessionId: string): ClaudeChatSource | undefined => {
+    const cached = chatSourceCache.get(sessionId)
+    if (cached !== undefined) return cached
+    if (sessions === undefined || uiConversation === undefined) return undefined
+    const session = sessions.binding(sessionId as SessionId)?.session as unknown as {
+      subscribe(listener: () => void): () => void
+      getSnapshot(): { running?: boolean }
+    } | undefined
+    if (session === undefined) return undefined
+    let chatTarget
+    try {
+      chatTarget = uiConversation.binding(sessionId).target('chat')
+    } catch {
+      return undefined
+    }
+    // useSyncExternalStore compares by identity, so the composed view must stay
+    // the same object until one of its two inputs actually moves.
+    let lastChat: unknown
+    let lastRunning: boolean | undefined
+    let view: ClaudeChatView = EMPTY_CHAT_VIEW
+    const source: ClaudeChatSource = {
+      subscribe(listener) {
+        const dropChat = chatTarget.subscribe(listener)
+        const dropSession = session.subscribe(listener)
+        return () => { dropChat(); dropSession() }
+      },
+      getSnapshot() {
+        const chat = chatTarget.getSnapshot()
+        const running = session.getSnapshot().running === true
+        if (chat === lastChat && running === lastRunning) return view
+        lastChat = chat
+        lastRunning = running
+        view = chat === undefined
+          ? EMPTY_CHAT_VIEW
+          : { chat: chat as ClaudeChatView['chat'], running }
+        return view
+      },
+    }
+    chatSourceCache.set(sessionId, source)
+    return source
+  }
+  // "Rewind to here" beside the copy action of every user message. Root
+  // scoped like the selection toolbar: it resolves the on-screen session
+  // itself and only arms inside sessions this plugin owns.
+  if (sessions !== undefined) {
+    // Stable prop identities: the control subscribes to them, so a re-render
+    // of the seat must not tear down and rebuild every subscription.
+    const rewind: ClaudeRewindInjected = {
+      t,
+      currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
+      subscribeSessions: listener => sessions.list.subscribe(listener),
+      chatOf: sessionId => claudeChatSource(sessionId),
+      projectionOf: sessionId => projections.source(sessionId),
+      ...(conversation === undefined ? {} : {
+        setDraft: (sessionId: string, text: string) => {
+          const scope = sessions.scope(sessionId as SessionId)
+          if (scope === undefined) return
+          sessionInput(conversation, scope).setDraft(text)
+        },
+      }),
+    }
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'claude-rewind',
+      locale: namespace,
+    }, () => <ClaudeRewind {...rewind} />))
+  }
+
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-tasks',
+    order: 28,
+    locale: namespace,
+    inject: (sessionId: string) => ({
+      t,
+      toggleTasks: () => sidebarTabs.toggle(CLAUDE_TAB_KINDS.tasks, sessionId, {}),
+      tasksOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.tasks, sessionId),
+    }),
+  }, ClaudeTasksHeaderAction))
   if (config.enhancedInterface) {
     // Icon-only diff trigger in the Session header's right-aligned utility
     // group. The action row next to the title is left-aligned (it rides inside
@@ -316,28 +446,6 @@ ${error.stack ?? ''}`
         }),
       }, ClaudeAgentPresetLabel))
     }
-    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-      name: 'conversation.session.header.utilities',
-      id: 'claude-plan',
-      order: 29,
-      locale: namespace,
-      inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
-        t,
-        togglePlan: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.plan, sessionId, {}) },
-        planOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.plan, sessionId),
-      }),
-    }, ClaudePlanHeaderAction))
-    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-      name: 'conversation.session.header.utilities',
-      id: 'claude-diff',
-      order: 30,
-      locale: namespace,
-      inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
-        t,
-        toggleDiff: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.diff, sessionId, {}) },
-        diffOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.diff, sessionId),
-      }),
-    }, ClaudeDiffHeaderAction))
     // In the composer's own tool row beside the attach and access controls: the
     // owner hands this slot the live draft, and an icon there costs the layout
     // nothing, where a docked row would move the composer on every keystroke.
@@ -365,27 +473,6 @@ ${error.stack ?? ''}`
         }
       },
     }, ClaudePromptRefineAction))
-    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-      name: 'conversation.input.dock',
-      id: 'claude-review-comments',
-      // Topmost dock row: pending comments render above DSH's QueueDock (20)
-      // and the repository status readout (20.5).
-      order: 18,
-      locale: namespace,
-      inject: (sessionId: string): ClaudeReviewCommentsInjected => ({
-        t,
-        sessionId,
-        ...(sessions === undefined || conversation === undefined ? {} : {
-          submitWith: (fallbackDraft: string) => {
-            const scope = sessions.scope(sessionId as SessionId)
-            if (scope === undefined) return
-            const input = sessionInput(conversation, scope)
-            if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
-            input.submit()
-          },
-        }),
-      }),
-    }, ClaudeReviewComments))
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
       name: 'conversation.input.dock',
       id: 'claude-repository-status',
@@ -435,81 +522,6 @@ ${error.stack ?? ''}`
         },
       })}
     />))
-    /** Compose the chat view the rewind control reads.
-     *
-     *  Desktop 2.0 split what used to be one Session snapshot: the Controller's
-     *  `binding.session` kept `running`, while the assembled Chat nodes moved to
-     *  the Conversation binding's 'chat' target. Reading the old combined shape
-     *  threw on `snapshot.chat.order` and took the whole overlay entry down. */
-    const chatSourceCache = new Map<string, ClaudeChatSource>()
-    const claudeChatSource = (sessionId: string): ClaudeChatSource | undefined => {
-      const cached = chatSourceCache.get(sessionId)
-      if (cached !== undefined) return cached
-      if (sessions === undefined || uiConversation === undefined) return undefined
-      const session = sessions.binding(sessionId as SessionId)?.session as unknown as {
-        subscribe(listener: () => void): () => void
-        getSnapshot(): { running?: boolean }
-      } | undefined
-      if (session === undefined) return undefined
-      let chatTarget
-      try {
-        chatTarget = uiConversation.binding(sessionId).target('chat')
-      } catch {
-        return undefined
-      }
-      // useSyncExternalStore compares by identity, so the composed view must stay
-      // the same object until one of its two inputs actually moves.
-      let lastChat: unknown
-      let lastRunning: boolean | undefined
-      let view: ClaudeChatView = EMPTY_CHAT_VIEW
-      const source: ClaudeChatSource = {
-        subscribe(listener) {
-          const dropChat = chatTarget.subscribe(listener)
-          const dropSession = session.subscribe(listener)
-          return () => { dropChat(); dropSession() }
-        },
-        getSnapshot() {
-          const chat = chatTarget.getSnapshot()
-          const running = session.getSnapshot().running === true
-          if (chat === lastChat && running === lastRunning) return view
-          lastChat = chat
-          lastRunning = running
-          view = chat === undefined
-            ? EMPTY_CHAT_VIEW
-            : { chat: chat as ClaudeChatView['chat'], running }
-          return view
-        },
-      }
-      chatSourceCache.set(sessionId, source)
-      return source
-    }
-    // "Rewind to here" beside the copy action of every user message. Root
-    // scoped like the selection toolbar: it resolves the on-screen session
-    // itself and only arms inside sessions this plugin owns.
-    if (sessions !== undefined) {
-      // Stable prop identities: the control subscribes to them, so a re-render
-      // of the seat must not tear down and rebuild every subscription.
-      const rewind: ClaudeRewindInjected = {
-        t,
-        currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
-        subscribeSessions: listener => sessions.list.subscribe(listener),
-        chatOf: sessionId => claudeChatSource(sessionId),
-        projectionOf: sessionId => projections.source(sessionId),
-        ...(conversation === undefined ? {} : {
-          setDraft: (sessionId: string, text: string) => {
-            const scope = sessions.scope(sessionId as SessionId)
-            if (scope === undefined) return
-            sessionInput(conversation, scope).setDraft(text)
-          },
-        }),
-      }
-      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-        name: 'shell.overlay',
-        id: 'claude-rewind',
-        locale: namespace,
-      }, () => <ClaudeRewind {...rewind} />))
-    }
-
     if (sessions !== undefined && conversation !== undefined) {
       // Shadow the Host queue strip: list-slot entries sharing an id form one
       // cell and the lowest priority renders, so this replaces it app-wide with

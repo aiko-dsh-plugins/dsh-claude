@@ -1,5 +1,5 @@
 # Shipped by dsh-claude. Claude Code owns the inner agent loop and tools;
-# this system preset contributes only the request-route override. DSH resolves
+# this preset reuses DSH skill discovery and explicit invocation. DSH resolves
 # the bare package specifier from the host profile when mounting system roots.
 - id: claude-code-route
   name: '@norman-else/dsh-claude/preset-route'
@@ -9,3 +9,9 @@
   # dsh-agent-presets' serviceForAgent().
   isolate:
     claudeCommands: true
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

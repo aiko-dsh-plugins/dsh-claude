@@ -1,3 +1,4 @@
+import { stopClaudeTask } from './task-control-api.ts'
 import { useEffect, useMemo, useState } from 'react'
 import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -5,7 +6,7 @@ import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
-import { isProjectedTask } from './task-projection.ts'
+import { isProjectedTask, isActiveTask, taskKind } from './task-projection.ts'
 import { taskTools } from './conversation-sidecar.ts'
 import { ClaudeTranscriptToolItem } from './ClaudeActivityNode.tsx'
 import { formatTokenCount } from './token-format.ts'
@@ -13,17 +14,20 @@ import { formatTokenCount } from './token-format.ts'
 export interface ClaudeTasksPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   closeDetails: () => void
-  turn: number
+  turn?: number
+  sessionId?: string
+  stopTask?: (sessionId: string, taskId: string) => Promise<void>
 }
 
 export interface ClaudeTasksPanelProps extends ClaudeTasksPanelInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
 }
 
-type StatusKey = 'tasksRunning' | 'tasksCompleted' | 'tasksFailed' | 'tasksStopped' | 'tasksKilled'
+type StatusKey = 'tasksPaused' | 'tasksRunning' | 'tasksCompleted' | 'tasksFailed' | 'tasksStopped' | 'tasksKilled'
 
 const STATUS_LABEL: Record<string, StatusKey> = {
   running: 'tasksRunning',
+  paused: 'tasksPaused',
   completed: 'tasksCompleted',
   failed: 'tasksFailed',
   stopped: 'tasksStopped',
@@ -33,8 +37,8 @@ const STATUS_LABEL: Record<string, StatusKey> = {
 export function visibleTaskGroups(tasks: readonly ClaudeTaskInfo[], dismissedSettledIds: ReadonlySet<string>) {
   const projected = tasks.filter(isProjectedTask)
   return {
-    running: projected.filter(task => task.status === 'running'),
-    finished: projected.filter(task => task.status !== 'running' && !dismissedSettledIds.has(task.taskId)),
+    running: projected.filter(task => isActiveTask(task)),
+    finished: projected.filter(task => !isActiveTask(task) && !dismissedSettledIds.has(task.taskId)),
   }
 }
 
@@ -47,7 +51,7 @@ export function tasksForTurn(tasks: readonly ClaudeTaskInfo[], turn: number) {
 }
 
 export interface TurnTaskSummary {
-  state: 'running' | 'failed' | 'completed'
+  state: 'running' | 'failed' | 'completed' | 'stopped'
   count: number
   running: number
   failed: number
@@ -56,11 +60,11 @@ export interface TurnTaskSummary {
 
 export function summarizeTurnTasks(tasks: readonly ClaudeTaskInfo[]): TurnTaskSummary | undefined {
   if (tasks.length === 0) return undefined
-  const running = tasks.filter(task => task.status === 'running').length
-  const failed = tasks.filter(task => task.status === 'failed' || task.status === 'stopped' || task.status === 'killed').length
+  const running = tasks.filter(task => isActiveTask(task)).length
+  const failed = tasks.filter(task => task.status === 'failed' || task.status === 'killed').length
   const completed = tasks.filter(task => task.status === 'completed').length
   return {
-    state: running > 0 ? 'running' : failed > 0 ? 'failed' : 'completed',
+    state: running > 0 ? 'running' : failed > 0 ? 'failed' : completed === tasks.length ? 'completed' : 'stopped',
     count: tasks.length,
     running,
     failed,
@@ -69,6 +73,7 @@ export function summarizeTurnTasks(tasks: readonly ClaudeTaskInfo[]): TurnTaskSu
 }
 
 function statusGlyph(status: ClaudeTaskInfo['status']): string {
+  if (status === 'paused') return 'Ⅱ'
   if (status === 'running') return '●'
   if (status === 'completed') return '✓'
   if (status === 'stopped') return '–'
@@ -86,7 +91,7 @@ function formatDuration(ms: number): string {
 function taskMeta(task: ClaudeTaskInfo, t: ClaudeTasksPanelInjected['t']): string[] {
   const parts: string[] = []
   if (task.subagentType !== undefined) parts.push(task.subagentType)
-  else if (task.taskType !== undefined) parts.push(task.taskType)
+  else if (taskKind(task) === 'background' && task.taskType !== undefined) parts.push(task.taskType)
   if (task.usage?.durationMs !== undefined) parts.push(formatDuration(task.usage.durationMs))
   if (task.usage?.totalTokens !== undefined) parts.push(t('tokens', { count: formatTokenCount(task.usage.totalTokens) }))
   if (task.usage?.toolUses !== undefined) parts.push(t('tasksToolUses', { count: task.usage.toolUses }))
@@ -119,11 +124,23 @@ function TaskCard(props: {
    *  dispatched it, not to the task, so they carry no taskId to filter on. */
   allActivities: readonly ClaudeActivityEvent[]
   t: ClaudeTasksPanelInjected['t']
+  stopTask?: () => Promise<void>
 }) {
-  const { task, activities, allActivities, t } = props
+  const { task, activities, allActivities, t, stopTask } = props
   const tools = useMemo(() => taskTools(allActivities, task.taskId), [allActivities, task.taskId])
   const [activityOpen, setActivityOpen] = useState(false)
-  const running = task.status === 'running'
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState<'tasksUnavailable' | 'tasksStopFailed'>()
+  useEffect(() => { if (!isActiveTask(task)) setStopping(false) }, [task.status])
+  const stop = async (): Promise<void> => {
+    if (stopTask === undefined || stopping) return
+    setStopping(true)
+    setStopError(undefined)
+    try { await stopTask() } catch (error) {
+      setStopError(error instanceof Error && error.message === 'tasksUnavailable' ? 'tasksUnavailable' : 'tasksStopFailed')
+    } finally { setStopping(false) }
+  }
+  const running = isActiveTask(task)
   const failed = task.status === 'failed' || task.status === 'killed'
   const meta = taskMeta(task, t)
   return (
@@ -133,15 +150,18 @@ function TaskCard(props: {
           {statusGlyph(task.status)}
         </span>
         <div style={styles.taskCardBody}>
-          <p style={{ ...styles.taskTitle, ...(failed ? { color: 'var(--dsw-alias-state-error-primary)' } : {}) }}>{task.description}</p>
+          <p style={{ ...styles.taskTitle, ...(failed ? { color: 'var(--dsw-alias-state-error-primary)' } : {}) }}>{task.workflowName ?? task.description}</p>
           <p style={styles.taskStatusLine}>
+            <span>{t(taskKind(task) === 'workflow' ? 'tasksWorkflows' : taskKind(task) === 'subagent' ? 'tasksSubagents' : 'tasksBackground')}</span><span aria-hidden="true"> · </span>
             <span>{t(STATUS_LABEL[task.status] ?? 'tasksRunning')}</span>
-            {task.backgrounded === true ? <><span aria-hidden="true"> · </span><span>{t('tasksBackground')}</span></> : null}
+            {task.backgrounded === true && taskKind(task) !== 'background' ? <><span aria-hidden="true"> · </span><span>{t('tasksBackground')}</span></> : null}
           </p>
         </div>
       </div>
+      {running && stopTask !== undefined ? <button type="button" style={styles.taskTextButton} disabled={stopping} onClick={() => { void stop() }}>{t(stopping ? 'tasksStopping' : 'tasksStop')}</button> : null}
+      {stopError === undefined ? null : <p role="alert" style={{ ...styles.taskSummary, color: 'var(--dsw-alias-state-error-primary)' }}>{t(stopError)}</p>}
       {meta.length === 0 ? null : <p style={styles.taskMeta}>{meta.join(' · ')}</p>}
-      {task.summary === undefined || running ? null : <p style={styles.taskSummary}>{task.summary}</p>}
+      {task.summary === undefined ? null : <p style={styles.taskSummary}>{task.summary}</p>}
       {activities.length === 0 && tools.length === 0 ? null : (
         <div style={styles.taskActivitySection}>
           <button type="button" style={styles.taskTextButton} aria-expanded={activityOpen} onClick={() => setActivityOpen(value => !value)}>
@@ -178,22 +198,22 @@ function GroupHeading(props: { label: string; count: number; collapsed?: boolean
   )
 }
 
-export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }: ClaudeTasksPanelProps) {
+export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn, sessionId, stopTask = stopClaudeTask }: ClaudeTasksPanelProps) {
   const projection = useClaudeProjection(value => value)
-  const tasks = useMemo(
-    () => tasksForTurn(projection.tasks?.tasks ?? [], turn),
-    [projection.tasks, turn],
-  )
+  const [filter, setFilter] = useState<'all' | 'subagent' | 'workflow' | 'background'>('all')
+  const scopedTasks = useMemo(() => (projection.tasks?.tasks ?? []).filter(task => isProjectedTask(task) && (turn === undefined || task.originTurn === turn)), [projection.tasks, turn])
+  const tasks = useMemo(() => scopedTasks.filter(task => filter === 'all' || taskKind(task) === filter), [scopedTasks, filter])
   useEffect(() => {
-    if (!projection.owned || tasks.length === 0) closeDetails()
-  }, [closeDetails, projection.owned, tasks.length])
+    if (!projection.owned) closeDetails()
+  }, [closeDetails, projection.owned])
+  useEffect(() => { setDismissedSettledIds(new Set()); setFilter('all') }, [sessionId, turn])
   const [finishedCollapsed, setFinishedCollapsed] = useState(false)
   const [dismissedSettledIds, setDismissedSettledIds] = useState<ReadonlySet<string>>(() => new Set())
   const groups = useMemo(() => visibleTaskGroups(tasks, dismissedSettledIds), [tasks, dismissedSettledIds])
   const taskActivities = useMemo(() => new Map(tasks.map(task => [task.taskId, activitiesForTask(projection.activities, task.taskId)])), [projection.activities, tasks])
   const clearFinished = (): void => setDismissedSettledIds(previous => new Set([
     ...previous,
-    ...tasks.filter(task => task.status !== 'running').map(task => task.taskId),
+    ...tasks.filter(task => !isActiveTask(task)).map(task => task.taskId),
   ]))
   if (!projection.owned) return null
   return (
@@ -201,16 +221,20 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
       <style data-dsh-claude-panel-icon-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}</style>
       <div style={styles.tasksHeader}>
         <div>
-          <span style={styles.tasksHeading}>{t('tasksPanelTurn')}</span>
-          <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn })}</span>
+          <span style={styles.tasksHeading}>{t(turn === undefined ? 'tasksPanel' : 'tasksPanelTurn')}</span>
+          {turn === undefined ? null : <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn })}</span>}
         </div>
         <button type="button" className={styles.panelIconButtonClass} aria-label={t('tasksClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
       </div>
+      <div role="group" aria-label={t('tasksFilter')} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 16px 12px' }}>
+        {(['all', 'subagent', 'workflow', 'background'] as const).map(value => <button type="button" key={value} style={{ ...styles.taskTextButton, padding: '4px 8px', borderRadius: 6, background: filter === value ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent' }} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(value === 'all' ? 'tasksAll' : value === 'subagent' ? 'tasksSubagents' : value === 'workflow' ? 'tasksWorkflows' : 'tasksBackground')}</button>)}
+      </div>
       <div style={styles.tasksBody}>
+        {scopedTasks.some(task => taskKind(task) === 'workflow') ? <p style={styles.taskMeta}>{t('tasksWorkflowProgress')}</p> : null}
         <section aria-label={t('tasksRunning')}>
           <GroupHeading label={t('tasksRunning')} count={groups.running.length} />
           {groups.running.length === 0 ? <p style={styles.tasksGroupEmpty}>{t('tasksNoneRunning')}</p> : (
-            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} {...(sessionId === undefined ? {} : { stopTask: () => stopTask(sessionId, task.taskId) })} />)}</div>
           )}
         </section>
         <section aria-label={t('tasksSettled')} style={styles.tasksFinishedSection}>
@@ -222,7 +246,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
             {...(groups.finished.length === 0 ? {} : { action: { label: t('tasksClear'), onClick: clearFinished } })}
           />
           {finishedCollapsed || groups.finished.length === 0 ? null : (
-            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} {...(sessionId === undefined ? {} : { stopTask: () => stopTask(sessionId, task.taskId) })} />)}</div>
           )}
         </section>
       </div>

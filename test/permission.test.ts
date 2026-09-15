@@ -86,6 +86,18 @@ describe('permission result mapping', () => {
 })
 
 describe('DSH approval bridge', () => {
+  it('delegates only managed DSH tools to their existing approval pipeline', async () => {
+    const state = active()
+    const request = vi.fn(async () => 'rejected' as const)
+    const delegates = (name: string) => name === 'mcp__dsh__call_connector'
+    const bridge = createPermissionBridge({ request }, () => state, undefined, undefined, delegates)
+    expect((await bridge('mcp__dsh__call_connector', { name: 'mcp__fixture__edit', arguments: {} }, toolOptions())).behavior).toBe('allow')
+    expect(request).not.toHaveBeenCalled()
+    expect((await bridge('mcp__other__edit', {}, toolOptions())).behavior).toBe('deny')
+    expect(request).toHaveBeenCalledOnce()
+    const unowned = createPermissionBridge({ request }, () => undefined, undefined, undefined, delegates)
+    expect((await unowned('mcp__dsh__call_connector', {}, toolOptions())).behavior).toBe('deny')
+  })
   it('audits pending and allowed decisions', async () => {
     const state = active()
     const request = vi.fn(async () => 'allowed-once' as const)

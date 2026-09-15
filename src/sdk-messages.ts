@@ -16,10 +16,13 @@ export type NormalizedSdkMessage =
     phase: 'started' | 'updated' | 'completed' | 'failed'
     /** Structured task-board fields for task_started/progress/updated/notification. */
     taskId?: string
-    taskStatus?: 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
+    taskStatus?: 'paused' | 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
     description?: string
     subagentType?: string
     taskType?: string
+    workflowName?: string
+    backgrounded?: boolean
+    ambient?: boolean
     lastToolName?: string
     usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }
     /** Ambient/housekeeping task: hide from chat rows, keep on the task board. */
@@ -210,6 +213,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const description = string(message.description)
     const subagentType = string(message.subagent_type)
     const taskType = string(message.task_type)
+    const workflowName = string(message.workflow_name)
     return [{
       kind: 'subagent',
       title: description ?? taskId ?? 'Claude subagent started',
@@ -220,6 +224,9 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       ...(description === undefined ? {} : { description }),
       ...(subagentType === undefined ? {} : { subagentType }),
       ...(taskType === undefined ? {} : { taskType }),
+      ...(workflowName === undefined ? {} : { workflowName }),
+      ...(typeof message.is_backgrounded !== 'boolean' ? {} : { backgrounded: message.is_backgrounded }),
+      ...(message.ambient === true || message.skip_transcript === true ? { ambient: true } : {}),
       ...(message.skip_transcript === true ? { skipTranscript: true } : {}),
     }]
   }
@@ -252,7 +259,9 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const error = string(patch?.error)
     const taskStatus = status === undefined
       ? undefined
-      : status === 'killed'
+      : status === 'paused'
+        ? 'paused' as const
+        : status === 'killed'
         ? 'killed' as const
         : status === 'completed'
           ? 'completed' as const
@@ -267,6 +276,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       ...(taskId === undefined ? {} : { taskId }),
       ...(taskStatus === undefined ? {} : { taskStatus }),
       ...(description === undefined ? {} : { description }),
+      ...(typeof patch?.is_backgrounded !== 'boolean' ? {} : { backgrounded: patch.is_backgrounded }),
       ...(error === undefined ? {} : { summary: error }),
     }]
   }

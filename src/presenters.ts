@@ -165,13 +165,20 @@ function genericTitle(title: string): ToolCallView {
   return { card: 'generic', kind: 'other', title }
 }
 
+const presentationDefinitions = new WeakSet<ToolDefinition>()
+
+/** Identify non-executable mirrors so capability discovery never offers them as DSH tools. */
+export function isClaudePresenter(definition: ToolDefinition | undefined): boolean {
+  return definition !== undefined && presentationDefinitions.has(definition)
+}
+
 function presenterDefinition(
   name: string,
   description: string,
   presentCall?: (args: unknown) => ToolCallView | undefined,
   presentResult?: (args: unknown, result: ToolResult) => ToolResultView | undefined,
 ): ToolDefinition {
-  return {
+  const definition: ToolDefinition = {
     name,
     description,
     parameters: { type: 'object', properties: {} },
@@ -185,6 +192,8 @@ function presenterDefinition(
     ...(presentCall === undefined ? {} : { presentCall }),
     ...(presentResult === undefined ? {} : { presentResult }),
   }
+  presentationDefinitions.add(definition)
+  return definition
 }
 
 const PRESENTATION_NOTE = 'Presentation mirror of the Claude Code tool; execution is owned by Claude Code.'

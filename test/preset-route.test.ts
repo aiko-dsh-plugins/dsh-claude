@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/preset-route.ts'
 import { CLAUDE_CODE_PROVIDER } from '../src/constants.ts'
+import { readModelSettings } from '../src/global-settings.ts'
+
+vi.mock('../src/global-settings.ts', () => ({ readModelSettings: vi.fn() }))
+beforeEach(() => { vi.mocked(readModelSettings).mockResolvedValue({ source: 'dsh', roles: {} }) })
 
 type RequestListener = (payload: unknown, next: () => Promise<{ provider?: string; model?: string }>) => Promise<{ provider?: string; model?: string }>
 
@@ -27,6 +31,13 @@ function capture(): { ctx: Context; listener: () => RequestListener; registered:
 }
 
 describe('Claude preset route', () => {
+  it('uses native default for a prior DSH selection when native mode is selected', async () => {
+    vi.mocked(readModelSettings).mockResolvedValue({ source: 'native', roles: {} })
+    const captured = capture()
+    apply(captured.ctx)
+    expect(await captured.listener()({}, async () => ({ provider: 'deepseek-official', model: 'deepseek-flash' })))
+      .toEqual({ provider: 'claude', model: 'default' })
+  })
   it('preserves the upstream selected model alias', async () => {
     const captured = capture()
     apply(captured.ctx)
@@ -41,10 +52,10 @@ describe('Claude preset route', () => {
     expect(await captured.listener()({}, async () => selected)).toEqual(selected)
   })
 
-  it('refuses providers without an Anthropic-compatible connection', async () => {
+  it('keeps generic DSH model selections for the Code transport', async () => {
     const captured = capture()
     apply(captured.ctx)
-    await expect(captured.listener()({}, async () => ({ provider: 'openai-only', model: 'example' }))).rejects.toThrow('no Claude Code model connection')
+    expect(await captured.listener()({}, async () => ({ provider: 'openai-only', model: 'example' }))).toEqual({ provider: 'openai-only', model: 'example' })
   })
 
   it('defaults to default when upstream carries no model', async () => {

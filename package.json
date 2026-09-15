@@ -1,7 +1,7 @@
 {
   "name": "@norman-else/dsh-claude",
   "description": "Run the local Claude Code CLI as a first-class main conversation inside DeepSeek Harness",
-  "version": "0.1.51-aiko.2",
+  "version": "0.1.51-aiko.5",
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
@@ -82,6 +82,9 @@
     "marked": "^18.0.11"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-skill": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-alpha.2 || >=0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-skill": "0.1.5-alpha.2 || >=0.1.5-rc.1",
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.5-alpha.2 || >=0.1.5-rc.1",
     "@deepseek-ai/dsh-agent-presets": "0.1.5-alpha.2 || >=0.1.5-rc.1",
@@ -114,6 +117,10 @@
     "@deepseek-ai/dsh-credentials": "0.1.5-alpha.2 || >=0.1.5-rc.1"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "0.122.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-skill": "0.1.5-rc.1",
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
     "@deepseek-ai/dsh-agent-default-model": "0.1.5-rc.1",

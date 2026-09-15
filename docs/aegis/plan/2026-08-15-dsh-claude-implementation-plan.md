@@ -6,6 +6,10 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 
 Aiko implementation: [DSH model connections](../../../AIKO.md#dsh-model-connections) use the public llm/stream, settings and credentials services. Connection resolution, credential isolation, query recreation/resume, model selection and native UI are covered by focused tests and an authenticated web-profile smoke.
 
+Aiko interface amendment: [Native conversation controls](../../../AIKO.md#native-conversation-controls) supersede the baseline ban on a session-header task control and per-task Stop. The pinned SDK exposes `Query.stopTask`; the Aiko interface retains Claude execution ownership.
+
+Aiko Kit/Code integration uses DSH's native skill preset plugins, scoped tool runtime, optional Kit resource tools, incremental native output and a query-scoped Messages transport for other model providers. The [integration evidence](../evidence/2026-09-15-kit-code-capabilities.md) owns this slice's validation; earlier live DeepSeek smoke evidence does not establish live coverage for generic providers or connectors.
+
 ## Scope check
 
 ### Facts
@@ -210,7 +214,7 @@ Expected evidence: Claude blocks on DSH's native question composer and resumes w
 ### Task 6 — Implement the DSH LLM bridge and preset route
 
 1. Implement an `LlmAdapter` advertising `default`, `sonnet`, `opus`, and `haiku` aliases.
-2. Resolve the newest direct human DSH message through the public attachment service. Keep text-only prompts as strings; convert ordered text/image blocks into Agent SDK `MessageParam` content.
+2. Resolve the newest direct human DSH message through the public attachment service. Keep text-only prompts as strings; convert ordered text/image blocks into Agent SDK `MessageParam` content. Include its adjacent native Session and Kit resource snapshots as specified in [prompt mapping](../spec/2026-08-15-dsh-claude-spec.md#33-prompt-mapping).
 3. Enforce the Host deployment's media, count, per-image byte, aggregate byte, pixel, and compatible dimension limits before and after verified reads; honor cancellation and keep errors bounded and attachment-free.
 4. Call the supervisor and map Claude partial text, usage, finish, abort, and errors into valid DSH `StreamChunk` order.
 5. Ensure no Claude tool call becomes a DSH tool-call chunk and no image bytes enter sidecars or activity records.

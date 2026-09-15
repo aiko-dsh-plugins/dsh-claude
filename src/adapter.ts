@@ -12,6 +12,8 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type {} from '@deepseek-ai/dsh-session-reference/types'
+import type {} from '@deepseek-ai/dsh-skill'
 import type { ModelInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, DEFAULT_CLAUDE_RENDER_MODE, type ClaudeRenderMode } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
@@ -48,6 +50,12 @@ const NO_RETRY_POLICY: ResolvedRetryPolicy = Object.freeze({
 type ClaudePrompt = SDKUserMessage['message']['content']
 type ClaudePromptBlock = Exclude<ClaudePrompt, string>[number]
 type AttachmentReader = Pick<AttachmentStore, 'imageLimits' | 'readImage'>
+
+/** Optional host-owned catalog; undefined results use native Claude discovery. */
+export interface ClaudeModelDirectory {
+  list(): Promise<readonly LlmModelInfo[] | undefined>
+  resolve(model: string): Promise<LlmResolvedModelInfo | undefined>
+}
 
 function abortIfRequested(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) return
@@ -104,20 +112,46 @@ function imageBlock(data: Uint8Array, mediaType: ImageMediaType): ClaudePromptBl
   }
 }
 
-/** Resolve only the newest direct human message; Claude's session owns history. */
+/** Resolve the newest human input, explicit references and user-invoked skills.
+ * Claude owns conversation history; unrelated DSH context is excluded.
+ * @param messages - Logged DSH model input in conversation order.
+ * @param attachments - Verified image storage and limits.
+ * @param signal - Turn cancellation.
+ * @returns Claude prompt retaining text/image order and quoted resource context.
+ */
 export async function resolveDirectUserPrompt(
   messages: GenerateOptions['messages'],
   attachments: AttachmentReader,
   signal?: AbortSignal,
 ): Promise<ClaudePrompt> {
-  const message = [...messages].reverse().find(candidate => (
+  const inputIndex = messages.findLastIndex(candidate => (
     candidate.role === 'user' && candidate.source.kind === 'user'
   ))
+  const message = messages[inputIndex]
   if (message === undefined) {
     throw new Error('dsh-claude: no direct human input was present in this model step')
   }
 
-  const imageRefs = message.content
+  const inputContent = [...message.content]
+  // Admission places snapshots after their direct input, before assistant/tool history.
+  for (const context of messages.slice(inputIndex + 1)) {
+    if (context.role !== 'user' || context.source.kind === 'user' || context.source.kind === 'tool') break
+    const explicitReference = context.source.kind === 'session-reference'
+      || context.source.kind === 'skill-invocation'
+      || (context.source.kind === 'plugin' && context.source.plugin === 'aiko-dsh-workbench-kit'
+        && context.source.form === 'snapshot')
+    if (!explicitReference) continue
+    if (context.source.kind === 'skill-invocation') {
+      const first = inputContent[0]
+      const directive = `/${context.source.name}`
+      if (first?.type === 'text' && (first.text === directive || first.text.startsWith(`${directive} `) || first.text.startsWith(`${directive}\n`))) {
+        inputContent[0] = { type: 'text', text: `Use the DSH skill ${context.source.name} for this request.${first.text.slice(directive.length)}` }
+      }
+    }
+    inputContent.push(...context.content.filter(block => block.type === 'text'))
+  }
+
+  const imageRefs = inputContent
     .filter((block): block is Extract<typeof block, { type: 'image' }> => block.type === 'image')
     .map(block => block.attachment)
   const limits = attachments.imageLimits
@@ -134,7 +168,7 @@ export async function resolveDirectUserPrompt(
   })
 
   if (imageRefs.length === 0) {
-    const text = message.content
+    const text = inputContent
       .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
       .map(block => block.text)
       .join('\n')
@@ -146,7 +180,7 @@ export async function resolveDirectUserPrompt(
   const content: ClaudePromptBlock[] = []
   let imageIndex = 0
   let verifiedBytes = 0
-  for (const block of message.content) {
+  for (const block of inputContent) {
     abortIfRequested(signal)
     if (block.type === 'text') {
       content.push({ type: 'text', text: block.text })
@@ -233,6 +267,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
     summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
     probeModels: () => Promise<readonly ModelInfo[]> = async () => [],
+    private readonly modelDirectory?: ClaudeModelDirectory,
   ) {
     super()
     this.#supervisor = supervisor
@@ -254,6 +289,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const mapped = await this.modelDirectory?.list()
+    if (mapped !== undefined) return mapped
     const models = await ensureClaudeModels(this.#probeModels)
     return models.map(model => ({
       provider,
@@ -265,6 +302,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
+    const mapped = await this.modelDirectory?.resolve(model)
+    if (mapped !== undefined) return mapped
     const known = claudeModelRow(model)
     const contextWindow = this.#supervisor.contextWindow(model) ?? known?.contextWindow
     return {
@@ -368,15 +407,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let completed = false
     let blockIndex = 0
     let text = ''
-    /** Settle the buffered prose as one text block. Each Claude result is one
-     *  block so tool activity stays ahead of the prose it explains and a
-     *  background-task report can follow in a block of its own. */
+    /** Close the current streamed text block before another content segment. */
     function* flushText(): Generator<StreamChunk> {
       if (text.length === 0) return
       const settled = text
       text = ''
-      yield { type: 'block-start', index: blockIndex, blockType: 'text' }
-      yield { type: 'text-delta', index: blockIndex, text: settled }
       yield { type: 'block-end', index: blockIndex, block: { type: 'text', text: settled } }
       blockIndex += 1
     }
@@ -387,14 +422,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue
         }
         if (event.type === 'text-delta') {
-          if (native) text += event.text
+          if (native && event.text.length > 0) {
+            if (text.length === 0) yield { type: 'block-start', index: blockIndex, blockType: 'text' }
+            text += event.text
+            yield { type: 'text-delta', index: blockIndex, text: event.text }
+          }
           continue
         }
         if (event.type === 'thinking') {
           if (!native) continue
-          // Thinking settles before the prose it precedes, so nothing is
-          // buffered yet; flush anyway to keep block order faithful when a
-          // model interleaves the two.
           yield* flushText()
           yield { type: 'block-start', index: blockIndex, blockType: 'reasoning' }
           yield { type: 'reasoning-delta', index: blockIndex, text: event.text }
@@ -403,7 +439,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue
         }
         yield* flushText()
-        if (event.type === 'segment-complete') continue
+        if (event.type === 'segment-complete' || event.type === 'text-boundary') continue
         completed = true
         if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
         yield { type: 'finish', reason: { kind: 'stop' } }
@@ -436,6 +472,7 @@ export function createClaudeCodeAdapter(
   renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
   summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
   probeModels: () => Promise<readonly ModelInfo[]> = async () => [],
+  modelDirectory?: ClaudeModelDirectory,
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle, probeModels)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle, probeModels, modelDirectory)
 }

@@ -33,7 +33,9 @@ export interface ClaudeTurnFooterProps extends ClaudeActivityTailInjected {
 }
 
 function taskGlyph(status: ClaudeTaskInfo['status']): { glyph: string; style: CSSProperties } {
-  if (status === 'failed') return { glyph: '×', style: styles.tasksHoverGlyphError }
+  if (status === 'stopped') return { glyph: '–', style: {} }
+  if (status === 'paused') return { glyph: 'Ⅱ', style: {} }
+  if (status === 'failed' || status === 'killed') return { glyph: '×', style: styles.tasksHoverGlyphError }
   if (status === 'completed') return { glyph: '✓', style: styles.tasksHoverGlyphDone }
   return { glyph: '●', style: styles.tasksHoverGlyphRunning }
 }
@@ -63,7 +65,9 @@ export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLaun
     ? t('tasksTurnRunning', { count: summary.running })
     : summary.state === 'failed'
       ? t('tasksTurnFailed', { failed: summary.failed, completed: summary.completed })
-      : t('tasksTurnCompleted', { count: summary.completed })
+      : summary.state === 'stopped'
+        ? t('tasksTurnStopped', { stopped: summary.count - summary.completed, completed: summary.completed })
+        : t('tasksTurnCompleted', { count: summary.completed })
   const stateStyle = summary.state === 'completed' ? styles.tasksBadgeDone : {}
   const dotStyle = summary.state === 'failed'
     ? styles.tasksBadgeDotError

@@ -5,6 +5,12 @@ import { normalizeSdkMessage } from '../src/sdk-messages.ts'
 const sdk = (value: unknown) => value as SDKMessage
 
 describe('Claude SDK message normalization', () => {
+  it('preserves workflow identity, paused state and background transitions from the engine', () => {
+    expect(normalizeSdkMessage(sdk({ type: 'system', subtype: 'task_started', task_id: 'workflow', task_type: 'local_workflow', workflow_name: 'Review', is_backgrounded: true }))).toMatchObject([{ taskType: 'local_workflow', workflowName: 'Review', backgrounded: true }])
+    expect(normalizeSdkMessage(sdk({ type: 'system', subtype: 'task_updated', task_id: 'workflow', patch: { status: 'paused', is_backgrounded: false } }))).toMatchObject([{ taskStatus: 'paused', backgrounded: false }])
+    expect(normalizeSdkMessage(sdk({ type: 'system', subtype: 'task_started', task_id: 'watcher', ambient: true }))).toMatchObject([{ ambient: true }])
+  })
+
   it('normalizes initialization without authentication material', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'system',

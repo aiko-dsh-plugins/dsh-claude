@@ -30,6 +30,7 @@ import {
 } from '../src/supervisor.ts'
 
 class FakeQuery extends AsyncQueue<SDKMessage> {
+  readonly stopTask = vi.fn(async (_taskId: string) => undefined)
   readonly interrupt = vi.fn(async () => undefined)
   readonly setModel = vi.fn(async () => undefined)
   readonly setPermissionMode = vi.fn(async () => undefined)
@@ -102,6 +103,7 @@ function fakeAgent(id = 'dsh-session-1', cwd = '/workspace', onAppend?: (type: s
     session,
     ctx: {
       tools: {
+        get: () => undefined,
         register: (definition: { name: string }) => {
           registeredTools.push(definition.name)
           return () => undefined
@@ -260,6 +262,59 @@ describe('DSH access mode mapping', () => {
 })
 
 describe('Claude supervisor', () => {
+  it('retains finished task history when a new process resumes the session', async () => {
+    const transport = factory()
+    const { agent } = fakeAgent()
+    const runtime = supervisor(transport.create)
+    onTestFinished(() => runtime.dispose())
+    await sidecars.get(runtime)!.writeTasks(agent.id, [
+      { taskId: 'finished', status: 'completed', description: 'Previous result', subagentType: 'Explore', originTurn: 1 },
+      { taskId: 'stale', status: 'running', description: 'Old process', backgrounded: true, originTurn: 1 },
+    ])
+    const output = await runtime.runTurn({ agent, prompt: 'Continue' })
+    transport.queries[0]!.push(init())
+    transport.queries[0]!.push(result('Continued'))
+    await collect(output)
+    expect((await projection(runtime)).tasks?.tasks).toEqual([
+      { taskId: 'finished', status: 'completed', description: 'Previous result', subagentType: 'Explore', originTurn: 1 },
+    ])
+  })
+  it('stops an observed Claude task without stopping its session or sibling tasks', async () => {
+    const transport = factory()
+    const { agent } = fakeAgent()
+    const runtime = supervisor(transport.create)
+    onTestFinished(() => runtime.dispose())
+    expect(await runtime.stopTask(agent.id, 'missing')).toBe(false)
+    expect(transport.queries).toHaveLength(0)
+    const output = await runtime.runTurn({ agent, prompt: 'Run parallel readers' })
+    const collected = collect(output)
+    void collected.catch(() => undefined) // Teardown may abort an unfinished fixture turn.
+    const query = transport.queries[0]!
+    query.push(init())
+    for (const id of ['workflow-1', 'sibling']) query.push({
+      type: 'system', subtype: 'task_started', task_id: id, task_type: 'local_workflow',
+      workflow_name: id, description: 'Read only', is_backgrounded: true,
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    await vi.waitFor(async () => expect((await projection(runtime)).tasks?.tasks).toHaveLength(2), { timeout: 3_000 })
+    expect(await runtime.stopTask('other-session', 'workflow-1')).toBe(false)
+    expect(await runtime.stopTask(agent.id, 'missing')).toBe(false)
+    query.stopTask.mockRejectedValueOnce(new Error('Unsupported task control'))
+    await expect(runtime.stopTask(agent.id, 'workflow-1')).rejects.toThrow('Unsupported')
+    expect(runtime.snapshots()[0]?.state).toBe('running')
+    expect(await runtime.stopTask(agent.id, 'workflow-1')).toBe(true)
+    expect(query.stopTask).toHaveBeenLastCalledWith('workflow-1')
+    expect(query.interrupt).not.toHaveBeenCalled()
+    expect((await projection(runtime)).tasks?.tasks.every(task => task.status === 'running')).toBe(true)
+    query.push({ type: 'system', subtype: 'task_notification', task_id: 'workflow-1', status: 'stopped', summary: 'Stopped', session_id: 'claude-session-1' } as SDKMessage)
+    await vi.waitFor(async () => expect((await projection(runtime)).tasks?.tasks.find(task => task.taskId === 'workflow-1')?.status).toBe('stopped'))
+    expect(await runtime.stopTask(agent.id, 'workflow-1')).toBe(false)
+    expect((await projection(runtime)).tasks?.tasks.find(task => task.taskId === 'sibling')).toMatchObject({ status: 'running', workflowName: 'sibling' })
+    query.push({ type: 'system', subtype: 'task_notification', task_id: 'sibling', status: 'completed', summary: 'Done', session_id: 'claude-session-1' } as SDKMessage)
+    query.push(result('Finished'))
+    await collected
+  })
+
   it('passes Claude Code’s default alias explicitly when creating a Query', async () => {
     const transport = factory()
     const owner = fakeAgent()
@@ -1005,6 +1060,34 @@ describe('Claude supervisor', () => {
     expect(runtime.snapshots()[0]).toMatchObject({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
     expect(JSON.stringify(runtime.snapshots())).not.toContain('fixture-secret')
     expect(JSON.stringify(await projection(runtime))).not.toContain('fixture-secret')
+  })
+
+  it('rebuilds and resumes the same alias when switching DSH and native model sources', async () => {
+    resetClaudeModels()
+    onTestFinished(resetClaudeModels)
+    const transport = factory([{ value: 'mapped-test', displayName: 'Mapped test', description: '' }])
+    const owner = fakeAgent()
+    let native = false
+    const runtime = supervisor(transport.create, 4, 60_000, undefined, 'native', async () => native ? undefined : {
+      provider: 'deepseek-official', model: 'mapped-sonnet', revision: 'role-mapping', env: { ANTHROPIC_API_KEY: 'fixture-secret' },
+    })
+    onTestFinished(() => runtime.dispose())
+    const request = { agent: owner.agent, prompt: 'one', provider: 'claude', model: 'sonnet' }
+    for (const source of [false, true, false]) {
+      native = source
+      const output = await runtime.runTurn(request)
+      const query = transport.queries.at(-1)!
+      expect(query.options.settingSources).toEqual(native ? ['user', 'project', 'local'] : [])
+      if (!native) expect(query.options.model).toBe('mapped-sonnet')
+      if (transport.queries.length > 1) expect(query.options.resume).toBe('claude-session-1')
+      expect(JSON.stringify(query.options)).not.toContain('fixture-secret')
+      query.push(init())
+      query.push(result('ok'))
+      await collect(output)
+      if (transport.queries.length === 1) expect(latestClaudeModels().some(row => row.id === 'mapped')).toBe(false)
+      if (native) expect(latestClaudeModels().some(row => row.id === 'mapped')).toBe(true)
+    }
+    expect(transport.queries).toHaveLength(3)
   })
 
   it('reuses one streaming query for multiple turns', async () => {

@@ -2,10 +2,14 @@ node_modules/
 lib/
 dist/
 coverage/
+.artifacts/
 dist-pack/
 *.tgz
 .DS_Store
 .aiko-*.log
+.env
+.env.*
+!.env.example
 
 # Never commit tsc emit artifacts beside source (typecheck runs with noEmit).
 src/**/*.js
