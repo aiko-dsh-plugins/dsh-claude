@@ -1,5 +1,9 @@
 # dsh-claude
 
+This repository is the Aiko fork of [Norman-else/dsh-claude](https://github.com/Norman-else/dsh-claude). The default `master` branch keeps the standalone upstream plugin; Aiko-specific work is tracked separately. The current Aiko/云遥 DSH 0.2 Code package is maintained in [Workbench `modules/code`](https://github.com/aiko-dsh-plugins/aiko-dsh-workbench/tree/codex/desktop-account-launcher/modules/code), which retains its upstream attribution. Changes here do not automatically update that product package. See the [repository map](https://github.com/aiko-dsh-plugins/aiko-dsh-workbench/blob/main/docs/repository-map.md) for source and release ownership.
+
+For development, `src/` owns Host and browser code, `test/` holds behavior tests, and `preset/` and `legacy-preset/` contain installation assets. Run `pnpm check` before packaging; `pnpm run release:check` previews publication without releasing. Use the installed Host version and this package's `dsh` metadata to verify compatibility before selecting it for a profile.
+
 ## 1. Overview
 
 `dsh-claude` runs the locally installed Claude Code CLI as a first-class conversation provider inside DeepSeek Harness (DSH). It uses Claude Code's official Agent SDK protocol instead of recreating the agent with a separate API client.
